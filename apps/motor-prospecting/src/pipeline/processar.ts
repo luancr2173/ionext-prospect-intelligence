@@ -1,7 +1,7 @@
 import type { EmpresaCandidata } from '@ionext/contratos';
 import {
   calcularLeadScore, classificarPresenca, classificarUrl, dominioProprioDoEmail, dominiosCandidatos, ehProvedorEmail,
-  segmentoPorCnae, similaridadeNomes, type DadosTitularidade, type ResultadoVerificacao, type Verificacoes,
+  perfilCombinaComNome, segmentoPorCnae, type DadosTitularidade, type ResultadoVerificacao, type Verificacoes,
 } from '@ionext/dominio';
 import { VERSAO_MOTOR, type ConfigMotor } from '../config.ts';
 import type { Sql } from '../db.ts';
@@ -221,9 +221,9 @@ async function avaliarResultadosBusca(
   for (const r of resultados.slice(0, 10)) {
     const tipo = classificarUrl(r.url);
     if (tipo.tipo === 'rede') {
-      const perfil = decodeURIComponent(new URL(r.url).pathname.replace(/[/_.-]+/g, ' '));
-      const compat = Math.max(...nomes.map((n) => Math.max(similaridadeNomes(n, r.titulo), similaridadeNomes(n, perfil))));
-      if (compat >= 0.5 && !redes.has(tipo.rede)) redes.set(tipo.rede, r.url.split('?')[0]!);
+      if (!redes.has(tipo.rede) && perfilCombinaComNome(r.url, r.titulo, nomes, dados.genericas ?? [])) {
+        redes.set(tipo.rede, r.url.split('?')[0]!.replace(/\/$/, ''));
+      }
       continue;
     }
     if (tipo.tipo !== 'candidato_site' || sitesChecados >= 4) continue;

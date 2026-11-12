@@ -137,7 +137,7 @@ describe.skipIf(!URL)('Motor 01 (integração)', () => {
     const s = await processarEstabelecimento(deps(redeFalsa({}), [provedor]), await estabelecimento(), { busca_id: null });
     expect(s.buscaWeb).toBe('executada');
     expect(s.candidata.verificacoes!.V6).toEqual({ status: 'executado', redes: ['instagram'] });
-    expect(s.candidata.contatos.find((c) => c.tipo === 'instagram')?.valor).toBe('https://www.instagram.com/clinicasorrisofeliz/');
+    expect(s.candidata.contatos.find((c) => c.tipo === 'instagram')?.valor).toBe('https://www.instagram.com/clinicasorrisofeliz');
     expect(s.candidata.verificacoes!.V3).toEqual({ status: 'nao_aplicavel' }); // gmail
     const r = await central.enviar([s.candidata], null);
     expect(r.resultados[0]).toMatchObject({ acao: 'criada', classificacao: 'SOMENTE_REDES' });

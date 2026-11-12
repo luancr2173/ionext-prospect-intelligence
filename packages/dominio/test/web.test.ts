@@ -117,3 +117,36 @@ describe('avaliarSitePara — diretórios e homônimos', () => {
     expect(paginaRasa('https://x.com.br/clinicas/df/abc-3494756')).toBe(false);
   });
 });
+
+// Regressão: falsos "sem site" e perfis não reconhecidos no reprocessamento (12/11/2026)
+import { perfilCombinaComNome, siglas } from '../src/index.ts';
+
+describe('siglas, revisão e Instagram', () => {
+  const g = ['odonto', 'odontologia', 'clinica', 'dental'];
+  const pag = (t: string) => `<html><body><nav><a href="/">x</a></nav>${t}</body></html>`;
+
+  it('sigla + palavra do ramo no domínio combina; sigla + outra coisa não', () => {
+    expect(siglas(['Clinica Odontologica Jc'], g)).toEqual(['jc']);
+    expect(dominioCombinaComNome('jcdental.com.br', ['Clinica Odontologica Jc'], g)).toBe(true);
+    expect(dominioCombinaComNome('csodonto.com.br', ['Cs - Odontopediatria e Ortodontia'], g)).toBe(true);
+    expect(dominioCombinaComNome('cobodontologiabrasilia.com.br', ['Cob - Centro Odontologico Brasiliense S/S Ltda'], g)).toBe(true);
+    expect(dominioCombinaComNome('usbank.com', ['Us Odontologia'], g)).toBe(false);
+  });
+
+  it('site achado na busca com domínio do nome e sem prova vai para revisão, não some', () => {
+    const d = { cnpj: null, telefones: [], nomes: ['Lira Odontologia Especializada'], cidade: 'Brasília', bairro: 'Asa Norte', genericas: g };
+    expect(avaliarSitePara('https://liraodonto.com.br/', pag('Bem-vindo'), d, 'busca').tipo).toBe('fraco');
+    // domínio gerado do nome (V4) sem nada na página continua descartado
+    expect(avaliarSitePara('https://liraodonto.com.br/', pag('Bem-vindo'), d, 'nome').tipo).toBe('terceiro');
+  });
+
+  it('Instagram: reconhece pelo @ ou pelo título; ignora post solto e outra empresa', () => {
+    expect(perfilCombinaComNome('https://www.instagram.com/studiosetti.odonto', 'Studio Setti - Clínica Odontologica (@studiosetti.odonto)', ['Studio Setti Odontologia Integrada'], g)).toBe(true);
+    expect(perfilCombinaComNome('https://www.instagram.com/cob.odontologia?hl=en', 'COB | Dentista em Brasília (@cob.odontologia)', ['Cob - Centro Odontologico Brasiliense S/S Ltda'], g)).toBe(true);
+    expect(perfilCombinaComNome('https://www.instagram.com/odontollifebsb?hl=en', 'Clínica Odontolife Ltda (@odontollifebsb)', ['Odontolife Clinica Odontologica Ltda'], g)).toBe(true);
+    expect(perfilCombinaComNome('https://www.instagram.com/odontopredf', 'Odonto PRE (@odontopredf)', ['Odonto Pre Clinica de Prevencao e Reabilitacao Ltda'], g)).toBe(true);
+    expect(perfilCombinaComNome('https://www.instagram.com/reel/DeASG5OTduq', 'Instagram', ['Clinica Radiologica Safe Carneiro'], g)).toBe(false);
+    expect(perfilCombinaComNome('https://www.instagram.com/bioodontologiaintegrada', 'Bio Odontologia Integrada (@bioodontologiaintegrada)', ['Clinica Odontologica Integrada S/S Ltda'], g)).toBe(false);
+    expect(perfilCombinaComNome('https://www.instagram.com/clinicaortoriso?hl=en', 'Excelência em Odontologia (@clinicaortoriso)', ['Orthomaster Odontologia Integrada'], g)).toBe(false);
+  });
+});

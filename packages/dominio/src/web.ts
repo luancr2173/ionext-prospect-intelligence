@@ -54,7 +54,12 @@ const GENERICAS = new Set([
   'academia', 'restaurante', 'lanchonete', 'barbearia', 'salao', 'beleza', 'auto', 'oficina', 'mecanica',
   'construtora', 'construcoes', 'engenharia', 'imoveis', 'imobiliaria', 'contabilidade', 'contabil', 'assessoria',
   'comercio', 'empresa', 'cia', 'filial', 'matriz', 'dr', 'dra', 'ss',
+  'odontopediatria', 'endodontia', 'implantodontia', 'periodontia', 'protese', 'radiologia', 'radiologica',
+  'center', 'clinic', 'odontologicos', 'odontologicas', 'especialidades', 'avancada', 'avancado',
 ]);
+
+/** Sufixos que aparecem colados a uma sigla no domínio/@: "jc"+"dental", "cob"+"odontologia"+"brasilia". */
+const COMPLEMENTOS = [...GENERICAS, 'bsb', 'df', 'brasilia', 'odonto', 'dent', 'clin', 'oficial', 'br'];
 
 /** Termos do nome que realmente identificam a empresa (sem genéricos, sem sufixo jurídico, ≥ 3 letras). */
 export function tokensDistintivos(nomes: string[], extras: string[] = []): string[] {
@@ -75,10 +80,57 @@ export function rotuloDominio(host: string): string {
   return (h.split('.').pop() ?? h).replace(/-/g, '');
 }
 
-/** O domínio tem a "cara" da empresa? Algum termo distintivo do nome aparece no rótulo do domínio. */
+/** Siglas do nome (2–3 letras, não genéricas): "Clínica Odontológica JC" → ["jc"]. */
+export function siglas(nomes: string[], extras: string[] = []): string[] {
+  const gen = new Set([...GENERICAS, ...extras.map((e) => normalizarNome(e))]);
+  const out = new Set<string>();
+  for (const n of nomes) for (const t of normalizarNome(n).split(' ')) if (/^[a-z]{2,3}$/.test(t) && !gen.has(t)) out.add(t);
+  return [...out];
+}
+
+/** "odontologiabrasilia" é só complemento genérico? (consome palavras conhecidas do início ao fim) */
+function soComplemento(resto: string): boolean {
+  if (resto === '') return true;
+  return COMPLEMENTOS.some((c) => c.length > 0 && resto.startsWith(c) && soComplemento(resto.slice(c.length)));
+}
+
+/** Rótulo (domínio ou @) bate com a sigla + complemento genérico: "jcdental", "csodonto", "cobodontologia". */
+function combinaSigla(rotulo: string, nomes: string[], extras: string[]): boolean {
+  return siglas(nomes, extras).some((sg) => rotulo.startsWith(sg) && soComplemento(rotulo.slice(sg.length)));
+}
+
+/** O domínio tem a "cara" da empresa? Termo distintivo do nome no rótulo do domínio, ou sigla + complemento genérico. */
 export function dominioCombinaComNome(host: string, nomes: string[], extras: string[] = []): boolean {
   const rotulo = rotuloDominio(host);
-  return tokensDistintivos(nomes, extras).some((t) => t.length >= 4 ? rotulo.includes(t) : rotulo.startsWith(t) || rotulo.endsWith(t));
+  const porTermo = tokensDistintivos(nomes, extras).some((t) => t.length >= 4 ? rotulo.includes(t) : rotulo.startsWith(t) || rotulo.endsWith(t));
+  return porTermo || combinaSigla(rotulo, nomes, extras);
+}
+
+const NAO_PERFIL = new Set(['p', 'reel', 'reels', 'tv', 'explore', 'stories', 'share', 'watch', 'groups', 'events', 'hashtag', 'search']);
+
+/**
+ * Um resultado de rede social é o perfil DESTA empresa?
+ * - descarta posts/reels soltos (não são perfil);
+ * - aceita se todos os termos distintivos do nome estão no @ (ex.: studiosetti.odonto) ou no título do resultado,
+ *   ou se o @ é sigla + complemento (cob.odontologia). Nome só genérico → exige título muito parecido.
+ */
+export function perfilCombinaComNome(url: string, titulo: string, nomes: string[], extras: string[] = []): boolean {
+  let handle: string;
+  try {
+    const partes = new URL(url).pathname.split('/').filter(Boolean);
+    if (partes.length === 0 || NAO_PERFIL.has(partes[0]!.toLowerCase())) return false;
+    handle = partes[0]!.toLowerCase().replace(/^@/, '').replace(/[._-]/g, '');
+  } catch { return false; }
+  const distintivos = tokensDistintivos(nomes, extras);
+  const tituloNorm = ` ${normalizarNome(titulo)} `;
+  if (distintivos.length > 0) {
+    if (distintivos.every((t) => handle.includes(t))) return true;
+    if (distintivos.every((t) => tituloNorm.includes(` ${t} `))) return true;
+  }
+  if (combinaSigla(handle, nomes, extras)) return true;
+  const sg = siglas(nomes, extras);
+  if (sg.length > 0 && sg.every((x) => tituloNorm.includes(` ${x} `))) return true;
+  return distintivos.length === 0 && sg.length === 0 && nomes.some((n) => similaridadeNomes(n, titulo) >= 0.8);
 }
 
 /** Página "rasa" (home ou 1 nível, sem IDs/CNPJ no caminho) — páginas de diretório costumam ser profundas e com ID. */
@@ -226,5 +278,7 @@ export function avaliarSitePara(url: string, html: string, d: DadosTitularidade,
   const distintivos = tokensDistintivos(d.nomes, d.genericas ?? []);
   const nomeAparece = distintivos.length > 0 && distintivos.every((x) => texto.includes(` ${x} `));
   if (combina && nomeAparece) return { tipo: 'fraco', detalhe: 'domínio e nome compatíveis, sem CNPJ/telefone/endereço na página' };
+  // Achado pela busca com o nome da empresa e domínio com a cara dela: na dúvida, revisão humana (nunca "sem site")
+  if (combina && origem === 'busca') return { tipo: 'fraco', detalhe: 'domínio parecido com o nome, achado na busca; conferir' };
   return { tipo: 'terceiro', detalhe: raso ? 'site sem relação comprovada' : 'página de terceiro (diretório/listagem)' };
 }
