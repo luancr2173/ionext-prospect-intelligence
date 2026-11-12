@@ -81,6 +81,7 @@
   --fonte: 'Archivo Variable', 'Archivo', 'Helvetica Neue', Arial, sans-serif;
   --serif: 'Instrument Serif', 'Times New Roman', Georgia, serif;
   --mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --suave-saida: cubic-bezier(.16, 1, .3, 1); /* mesma curva do site */
 }
 
 * { box-sizing: border-box; }
@@ -258,8 +259,10 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .erro { color: var(--vermelho); font-size: 13px; min-height: 18px; }
 
 /* ---------------------------------------------------------------- aviso flutuante */
-.aviso { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--superficie-2);
-  border: 1px solid var(--linha-forte); border-radius: 999px; padding: 10px 20px; font-size: 14px; box-shadow: var(--sombra); }
+.aviso { position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 16px) scale(.96); opacity: 0; background: var(--superficie-2);
+  border: 1px solid var(--linha-forte); border-radius: 999px; padding: 10px 20px; font-size: 14px; box-shadow: var(--sombra);
+  transition: opacity .3s var(--suave-saida), transform .45s var(--suave-saida); z-index: 30; }
+.aviso.visivel { opacity: 1; transform: translate(-50%, 0) scale(1); }
 
 /* ---------------------------------------------------------------- CRM: canal, abas, lote, funil, linha do tempo */
 .canal { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px;
@@ -354,3 +357,61 @@ select.mover { padding: 5px 28px 5px 10px; font-size: 12px; border-radius: 8px; 
   .busca-funil { max-width: none; margin-left: 0; flex-basis: 100%; }
 }
 .tempo li.tempo-etapa::before { border-color: var(--apagado); background: var(--superficie-2); }
+
+/* ---------------------------------------------------------------- movimento (curva e ritmo do ionext.com.br) */
+.abas { position: relative; }
+.abas a { position: relative; z-index: 1; }
+.abas a.ativa { background: transparent; }
+.abas-indicador { position: absolute; top: 3px; left: 3px; height: calc(100% - 6px); border-radius: 999px; background: var(--primario-fundo);
+  opacity: 0; z-index: 0; transition: transform .5s var(--suave-saida), width .5s var(--suave-saida), opacity .2s; }
+.abas-indicador.sem-transicao { transition: none; }
+
+/* troca de tela: some rápido, entra em cascata */
+.conteudo { transition: opacity .18s ease, transform .18s ease; }
+.conteudo.saindo { opacity: .35; transform: translateY(4px); }
+@keyframes entrar { from { opacity: 0; transform: translateY(14px); } }
+@keyframes crescer { from { transform: scaleX(0); } }
+.entrando > *, .entrando .grade > *, .entrando .kanban > .coluna, .entrando .tabela tbody tr, .entrando .hoje-item, .entrando .card-op {
+  animation: entrar .7s var(--suave-saida) both; }
+.entrando > :nth-child(2), .entrando .grade > :nth-child(2), .entrando .kanban > :nth-child(2) { animation-delay: .06s; }
+.entrando > :nth-child(3), .entrando .grade > :nth-child(3), .entrando .kanban > :nth-child(3) { animation-delay: .12s; }
+.entrando > :nth-child(4), .entrando .grade > :nth-child(4), .entrando .kanban > :nth-child(4) { animation-delay: .18s; }
+.entrando > :nth-child(n+5), .entrando .kanban > :nth-child(n+5) { animation-delay: .24s; }
+.entrando .kanban > :nth-child(n+6) { animation-delay: .3s; }
+.entrando .card-op, .entrando .hoje-item { animation-delay: .2s; }
+.entrando .tabela tbody tr { animation-duration: .5s; }
+.entrando .tabela tbody tr:nth-child(n+2) { animation-delay: .04s; }
+.entrando .tabela tbody tr:nth-child(n+4) { animation-delay: .08s; }
+.entrando .tabela tbody tr:nth-child(n+8) { animation-delay: .12s; }
+.entrando .tabela tbody tr:nth-child(n+12) { animation-delay: .16s; }
+.entrando .barra span, .entrando .trilho span, .entrando .progresso span { transform-origin: left; animation: crescer 1s var(--suave-saida) .25s both; }
+.trilho span, .barra span { transition: width .6s var(--suave-saida); }
+
+/* toque e passagem do mouse */
+.cartao { transition: border-color .25s, background-color .25s; }
+.card-op { transition: border-color .2s, transform .3s var(--suave-saida), box-shadow .3s var(--suave-saida), opacity .2s; }
+.card-op:hover { transform: translateY(-2px); box-shadow: var(--sombra); }
+.card-op.arrastando { opacity: .35; transform: scale(.97); box-shadow: none; }
+@keyframes chegar { 0% { transform: scale(.94); opacity: .4; } 60% { transform: scale(1.02); opacity: 1; } 100% { transform: none; } }
+.card-op.chegou { animation: chegar .45s var(--suave-saida); border-color: var(--azul); }
+.coluna { transition: border-color .2s, background-color .2s, transform .3s var(--suave-saida); }
+.coluna.alvo { transform: translateY(-2px); }
+.hoje-item { transition: background-color .2s, padding .3s var(--suave-saida); border-radius: 10px; }
+.hoje-item:hover { background: var(--hover); padding-left: 8px; padding-right: 8px; }
+.tabela tbody tr { transition: background-color .15s; }
+.botao, .aba-canal, .tema, .abas a { transition: background-color .2s, color .2s, border-color .2s, transform .15s, opacity .2s; }
+.botao:active, .aba-canal:active { transform: scale(.97); }
+input, select, textarea { transition: border-color .2s, box-shadow .2s, background-color .2s; }
+input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 4px var(--azul-fundo); }
+.tema svg { transition: transform .5s var(--suave-saida); }
+.tema:hover svg { transform: rotate(20deg); }
+.etiqueta, .canal { transition: background-color .2s, border-color .2s, color .2s; }
+
+/* troca de tema: círculo saindo do botão (View Transitions, como no site) */
+html.revelando-tema::view-transition-old(root), html.revelando-tema::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--suave-saida) forwards; }
+@keyframes revelar { from { clip-path: circle(0 at var(--tema-x) var(--tema-y)); } to { clip-path: circle(var(--tema-r) at var(--tema-x) var(--tema-y)); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

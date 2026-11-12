@@ -26,9 +26,47 @@ function aviso(texto) {
   const el = document.getElementById('aviso');
   el.textContent = texto;
   el.hidden = false;
+  requestAnimationFrame(() => el.classList.add('visivel'));
   clearTimeout(aviso.t);
-  aviso.t = setTimeout(() => { el.hidden = true; }, 3500);
+  aviso.t = setTimeout(() => {
+    el.classList.remove('visivel');
+    aviso.t = setTimeout(() => { el.hidden = true; }, 300);
+  }, 3500);
 }
+
+// ------------------------------------------------------------------ movimento
+const semMovimento = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Números contam do zero até o valor (só na entrada da tela, não na atualização automática). */
+function contarNumeros(raiz) {
+  if (semMovimento()) return;
+  raiz.querySelectorAll('.kpi-valor, .passo-valor').forEach((el) => {
+    const alvo = Number(el.textContent.replace(/\D/g, ''));
+    if (!alvo) return;
+    const t0 = performance.now(), dur = Math.min(900, 400 + alvo * 4);
+    const passo = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      el.textContent = Math.round(alvo * (1 - Math.pow(1 - p, 3))).toLocaleString('pt-BR');
+      if (p < 1) requestAnimationFrame(passo);
+    };
+    el.textContent = '0';
+    requestAnimationFrame(passo);
+  });
+}
+
+/** Pílula da aba ativa desliza até a aba nova. */
+function moverIndicador(animar) {
+  const nav = document.querySelector('.abas');
+  const ativa = nav && nav.querySelector('a.ativa');
+  let ind = nav && nav.querySelector('.abas-indicador');
+  if (!nav) return;
+  if (!ind) { ind = h('span', { class: 'abas-indicador', 'aria-hidden': 'true' }); nav.prepend(ind); }
+  if (!ativa) { ind.style.opacity = '0'; return; }
+  if (!animar) ind.classList.add('sem-transicao');
+  Object.assign(ind.style, { opacity: '1', width: `${ativa.offsetWidth}px`, transform: `translateX(${ativa.offsetLeft - 3}px)` });
+  if (!animar) requestAnimationFrame(() => ind.classList.remove('sem-transicao'));
+}
+window.addEventListener('resize', () => moverIndicador(false));
 
 async function api(metodo, caminho, corpo) {
   const r = await fetch(caminho, {
@@ -451,8 +489,12 @@ async function telaFunil(params) {
       : null;
     return h('article', {
       class: `card-op${op.canal === 'whatsapp' ? '' : ' sem-zap'}${parada(op) ? ' parada' : ''}`, draggable: 'true', tabindex: '0',
-      'data-nome': `${op.nome_fantasia} ${op.bairro || ''}`.toLowerCase(),
-      ondragstart: (ev) => { ev.dataTransfer.setData('text/plain', op.id); ev.dataTransfer.effectAllowed = 'move'; },
+      'data-nome': `${op.nome_fantasia} ${op.bairro || ''}`.toLowerCase(), 'data-id': op.id,
+      ondragstart: (ev) => {
+        ev.dataTransfer.setData('text/plain', op.id); ev.dataTransfer.effectAllowed = 'move';
+        const el = ev.currentTarget; requestAnimationFrame(() => el.classList.add('arrastando'));
+      },
+      ondragend: (ev) => ev.currentTarget.classList.remove('arrastando'),
       onclick: () => { location.hash = `#/empresa/${op.empresa_id}`; },
       onkeydown: (ev) => { if (ev.key === 'Enter') location.hash = `#/empresa/${op.empresa_id}`; },
     },
@@ -478,7 +520,16 @@ async function telaFunil(params) {
       ondrop: (ev) => {
         ev.preventDefault(); col.classList.remove('alvo');
         const op = porId.get(ev.dataTransfer.getData('text/plain'));
-        if (op && op.etapa !== chave) mover(op, status);
+        if (!op || op.etapa === chave) return;
+        // move o cartão na hora (a API confirma em seguida e a tela se atualiza sem piscar)
+        const cartao = kanban.querySelector(`[data-id="${op.id}"]`);
+        if (cartao) {
+          col.querySelector('.coluna-vazia')?.remove();
+          col.querySelector('header').after(cartao);
+          cartao.classList.remove('arrastando');
+          cartao.classList.add('chegou');
+        }
+        mover(op, status);
       } },
       h('header', {}, h('span', {}, rotulo),
         h('span', { class: 'coluna-acoes' },
@@ -745,13 +796,21 @@ function formVerificacaoManual(empresaId) {
 // ------------------------------------------------------------------ roteamento
 let timerAtualizacao = null;
 
+let ultimaTela = null;
 async function render() {
   clearInterval(timerAtualizacao);
   const [caminho, qs] = (location.hash.slice(1) || '/').split('?');
+  const entrando = caminho !== ultimaTela;
+  const primeira = ultimaTela === null;
+  const novoEndereco = location.hash !== render.hash;
+  render.hash = location.hash;
+  ultimaTela = caminho;
+  if (entrando && !semMovimento()) $app.classList.add('saindo');
   const params = new URLSearchParams(qs || '');
   document.querySelectorAll('.abas a').forEach((a) => a.classList.toggle('ativa',
     (a.dataset.aba === 'inicio' && caminho === '/') || (a.dataset.aba === 'empresas' && caminho.startsWith('/empresa'))
     || (a.dataset.aba === 'funil' && caminho === '/funil')));
+  moverIndicador(!primeira);
   $app.classList.remove('largo');
   try {
     if (caminho === '/') {
@@ -761,9 +820,21 @@ async function render() {
     else if (caminho === '/funil') await telaFunil(params);
     else if (caminho.startsWith('/empresa/')) await telaEmpresa(caminho.split('/')[2]);
     else location.hash = '#/';
-    window.scrollTo({ top: 0 });
+    if (novoEndereco) window.scrollTo({ top: 0 });
+    if (entrando) {
+      if (!semMovimento()) {
+        $app.classList.remove('entrando');
+        void $app.offsetWidth; // reinicia a animação
+        $app.classList.add('entrando');
+        contarNumeros($app);
+        clearTimeout(render.t);
+        render.t = setTimeout(() => $app.classList.remove('entrando'), 1200);
+      }
+    }
   } catch (e) {
     if (e.message !== 'sessão expirada') $app.replaceChildren(h('div', { class: 'vazio' }, `Erro: ${e.message}`));
+  } finally {
+    $app.classList.remove('saindo');
   }
 }
 
@@ -785,14 +856,26 @@ async function iniciar() {
 const corTema = () => document.querySelector('meta[name=theme-color]')
   .setAttribute('content', document.documentElement.dataset.theme === 'light' ? '#f4f2ee' : '#0a0a0c');
 corTema();
-document.getElementById('tema').addEventListener('click', () => {
+document.getElementById('tema').addEventListener('click', (ev) => {
   const raiz = document.documentElement;
   const novo = raiz.dataset.theme === 'light' ? 'dark' : 'light';
-  raiz.classList.add('trocando-tema');
-  raiz.dataset.theme = novo;
-  try { localStorage.setItem('ionext-tema', novo); } catch { /* sem storage */ }
-  corTema();
-  setTimeout(() => raiz.classList.remove('trocando-tema'), 400);
+  const aplicar = () => {
+    raiz.dataset.theme = novo;
+    try { localStorage.setItem('ionext-tema', novo); } catch { /* sem storage */ }
+    corTema();
+  };
+  if (semMovimento()) return aplicar();
+  if (!document.startViewTransition) {
+    raiz.classList.add('trocando-tema'); aplicar();
+    return setTimeout(() => raiz.classList.remove('trocando-tema'), 400);
+  }
+  const r = ev.currentTarget.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  raiz.style.setProperty('--tema-x', `${x}px`);
+  raiz.style.setProperty('--tema-y', `${y}px`);
+  raiz.style.setProperty('--tema-r', `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`);
+  raiz.classList.add('revelando-tema');
+  document.startViewTransition(aplicar).finished.finally(() => raiz.classList.remove('revelando-tema'));
 });
 
 // busca rápida no topo; atalho "/"
