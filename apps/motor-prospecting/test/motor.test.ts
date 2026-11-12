@@ -50,11 +50,11 @@ function montarDiretorioReceita(): string {
     estab({ basico: '44555666', uf: 'SP', mun: '7107', fantasia: 'EM SP' }),       // outra UF
   ]);
   zip(dir, 'Estabelecimentos1.zip', [
-    estab({ basico: '55666777', ordem: '0001', dv: '01', fantasia: 'ODONTO MEI', email: 'contato@odontomei.com.br', bairro: 'TAGUATINGA NORTE (TAGUATINGA)', tel1: '998887766' }),
+    estab({ basico: '55666777', ordem: '0001', dv: '01', fantasia: 'ODONTO PRIME', email: 'contato@odontoprime.com.br', bairro: 'TAGUATINGA NORTE (TAGUATINGA)', tel1: '998887766' }),
   ]);
   zip(dir, 'Empresas0.zip', [
     ['11222333', 'SORRISO FELIZ ODONTOLOGIA LTDA', '2062', '49', '10000,00', '01', ''],
-    ['55666777', 'JOAO DA SILVA 12345678900', '2135', '50', '1000,00', '01', ''],
+    ['55666777', 'ODONTO PRIME CLINICA LTDA', '2062', '49', '1000,00', '01', ''],
   ]);
   zip(dir, 'Simples.zip', [
     ['11222333', 'S', '20150310', '00000000', 'N', '00000000', '00000000'],
@@ -88,7 +88,7 @@ describe.skipIf(!URL)('Motor 01 (integração)', () => {
     logs.length = 0;
     await sql`truncate empresa, evidencia, busca, opt_out, segmento_prioritario cascade`;
     await sql`truncate receita.estabelecimento, receita.carga, motor.catalogo_osm, motor.catalogo_osm_atualizacao,
-              motor.uso_busca_web, motor.fila_busca_web, motor.busca_progresso, motor.empresa_processada`;
+              motor.uso_busca_web, motor.fila_busca_web, motor.busca_progresso, motor.empresa_processada, motor.cache_busca_web`;
   });
 
   const ctx = (rede: ReturnType<typeof redeFalsa>, provedores: ProvedorBusca[] = []): Contexto => ({
@@ -178,9 +178,9 @@ describe.skipIf(!URL)('Motor 01 (integração)', () => {
 
   it('PRESENCA_FRACA: domínio do e-mail declarado existe mas o site não responde; MEI não tem contato comercial', async () => {
     await carregar();
-    const rede = redeFalsa({ dns: { 'odontomei.com.br': ['1.2.3.4'] } }); // DNS ok, HTTP recusa
+    const rede = redeFalsa({ dns: { 'odontoprime.com.br': ['1.2.3.4'] } }); // DNS ok, HTTP recusa
     const s = await processarEstabelecimento(deps(rede), await estabelecimento('55666777000101'), { busca_id: null });
-    expect(s.candidata.verificacoes!.V3).toEqual({ status: 'site_encontrado', url: 'https://odontomei.com.br', acessivel: false });
+    expect(s.candidata.verificacoes!.V3).toEqual({ status: 'site_encontrado', url: 'https://odontoprime.com.br', acessivel: false });
     expect(s.candidata.porte).toBe('MEI');
     expect(s.candidata.contatos.every((c) => c.publico_comercial === false)).toBe(true);
     const r = await central.enviar([s.candidata], null);
@@ -206,6 +206,18 @@ describe.skipIf(!URL)('Motor 01 (integração)', () => {
     expect(s.candidata.endereco.lat).toBe(-15.76);
   });
 
+  it('reprocessar usa o cache da busca web (não gasta cota de novo)', async () => {
+    await carregar();
+    let chamadas = 0;
+    const p: ProvedorBusca = { nome: 'tavily', limiteMensal: 10, buscar: async () => { chamadas++; return []; } };
+    await processarEstabelecimento(deps(redeFalsa({}), [p]), await estabelecimento(), { busca_id: null });
+    const s2 = await processarEstabelecimento(deps(redeFalsa({}), [p]), await estabelecimento(), { busca_id: null });
+    expect(chamadas).toBe(1);
+    expect(s2.buscaWeb).toBe('executada');
+    const bw = s2.candidata.evidencias.find((x) => x.fonte === 'busca_web');
+    expect(bw?.payload.provedor).toBe('cache:tavily');
+  });
+
   // ------------------------------------------------------------------------------------------- cota e fila do Claude
   it('respeita a cota gratuita e cai para a fila do Claude quando tudo esgota', async () => {
     await carregar();
@@ -217,7 +229,7 @@ describe.skipIf(!URL)('Motor 01 (integração)', () => {
     expect(s2.buscaWeb).toBe('enfileirada_claude');
     const fila = await sql`select cnpj, consulta, contexto from motor.fila_busca_web`;
     expect(fila).toHaveLength(1);
-    expect(fila[0]!.consulta).toContain('Odonto Mei');
+    expect(fila[0]!.consulta).toContain('Odonto Prime');
     expect(s2.candidata.verificacoes!.V5).toEqual({ status: 'nao_executado' });
   });
 

@@ -1,6 +1,6 @@
 import type { EmpresaCandidata } from '@ionext/contratos';
 import {
-  calcularLeadScore, classificarPresenca, classificarUrl, dominioProprioDoEmail, dominiosCandidatos,
+  calcularLeadScore, classificarPresenca, classificarUrl, dominioProprioDoEmail, dominiosCandidatos, ehProvedorEmail,
   segmentoPorCnae, similaridadeNomes, type DadosTitularidade, type ResultadoVerificacao, type Verificacoes,
 } from '@ionext/dominio';
 import { VERSAO_MOTOR, type ConfigMotor } from '../config.ts';
@@ -57,7 +57,7 @@ export async function processarEstabelecimento(
   const seg = segmentoPorCnae(e.cnae_principal);
   const nomes = [e.nome_fantasia, e.razao_social].filter((n): n is string => !!n && n.length > 1);
   const nomePrincipal = titulo(e.nome_fantasia || e.razao_social) ?? e.cnpj;
-  const dadosTit: DadosTitularidade = { cnpj: e.cnpj, telefones: e.telefones, nomes, cidade: e.municipio_nome, bairro: e.bairro };
+  const dadosTit: DadosTitularidade = { cnpj: e.cnpj, telefones: e.telefones, nomes, cidade: e.municipio_nome, bairro: e.bairro, genericas: seg?.palavras ?? [] };
 
   const evidencias: EmpresaCandidata['evidencias'] = [{
     ref: 'rf', fonte: 'receita', url: null, coletado_em: iso, confiabilidade: 'alta',
@@ -97,7 +97,8 @@ export async function processarEstabelecimento(
       } else {
         const s = await checarUrl(d.rede, c.website);
         checagens.push({ alvo: c.website, estado: s.estado, em: iso, ...('url' in s ? { url_final: s.url } : {}) });
-        if (s.estado === 'ativo') V2 = { status: 'site_encontrado', url: s.url, acessivel: true };
+        if (s.estado === 'ativo' && avaliarTitularidade(s, dadosTit, 'osm').tipo === 'proprio') V2 = { status: 'site_encontrado', url: s.url, acessivel: true };
+        else if (s.estado === 'ativo') V2 = { status: 'nada_encontrado' }; // website do POI aponta para diretório
         else if (s.estado === 'redireciona_rede') { redes.set(s.rede, s.url); V2 = { status: 'nada_encontrado' }; }
         else if (s.estado === 'erro') V2 = { status: 'erro', detalhe: s.detalhe };
         else V2 = { status: 'site_encontrado', url: c.website, acessivel: false };
@@ -107,9 +108,10 @@ export async function processarEstabelecimento(
 
   // ---- V3: domínio do e-mail declarado
   let V3: ResultadoVerificacao = { status: 'nao_aplicavel' };
-  const dominioEmail = e.email ? dominioProprioDoEmail(e.email) : null;
+  const dominioEmailBruto = e.email ? dominioProprioDoEmail(e.email) : null;
+  const dominioEmail = dominioEmailBruto && !ehProvedorEmail(dominioEmailBruto) ? dominioEmailBruto : null;
   if (dominioEmail) {
-    const { avaliacao, registro } = await avaliarDominio(d.rede, dominioEmail, dadosTit, true);
+    const { avaliacao, registro } = await avaliarDominio(d.rede, dominioEmail, dadosTit, 'email');
     checagens.push(registro);
     if (avaliacao.tipo === 'proprio') V3 = { status: 'site_encontrado', url: avaliacao.url, acessivel: true };
     else if (avaliacao.tipo === 'proprio_fora_do_ar') V3 = { status: 'site_encontrado', url: avaliacao.url, acessivel: false };
@@ -124,7 +126,7 @@ export async function processarEstabelecimento(
     let inconclusivo: ResultadoVerificacao | null = null;
     let erro: string | null = null;
     for (const dom of dominiosCandidatos(nomes, seg?.palavras ?? []).filter((x) => x !== dominioEmail)) {
-      const { avaliacao, registro } = await avaliarDominio(d.rede, dom, dadosTit, false);
+      const { avaliacao, registro } = await avaliarDominio(d.rede, dom, dadosTit, 'nome');
       checagens.push(registro);
       if (avaliacao.tipo === 'proprio') { V4 = { status: 'site_encontrado', url: avaliacao.url, acessivel: true }; inconclusivo = null; erro = null; break; }
       if (avaliacao.tipo === 'fraco' && !inconclusivo) inconclusivo = { status: 'inconclusivo', url: avaliacao.url, detalhe: avaliacao.detalhe };
@@ -230,7 +232,7 @@ async function avaliarResultadosBusca(
     checagens.push({ alvo: r.url, estado: s.estado, em: iso, ...('url' in s ? { url_final: s.url } : {}) });
     if (s.estado === 'redireciona_rede') continue;
     if (s.estado !== 'ativo') continue;
-    const a = avaliarTitularidade(s, dados, false);
+    const a = avaliarTitularidade(s, dados, 'busca');
     if (a.tipo === 'proprio') return { status: 'site_encontrado', url: a.url, acessivel: true };
     if (a.tipo === 'fraco' && !inconclusivo) inconclusivo = { status: 'inconclusivo', url: a.url, detalhe: a.detalhe };
   }

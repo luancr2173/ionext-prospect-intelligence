@@ -67,3 +67,53 @@ describe('inconclusivo', () => {
     expect(r.classificacao).toBe('PENDENTE');
   });
 });
+
+// Regressão: falsos positivos reais da primeira busca (clínicas odontológicas, DF, 12/11/2026)
+import { avaliarSitePara, dominioCombinaComNome, ehProvedorEmail, paginaRasa, tokensDistintivos } from '../src/index.ts';
+
+describe('avaliarSitePara — diretórios e homônimos', () => {
+  const pagina = (t: string) => `<html><body><nav><a href="/">x</a></nav>${t}</body></html>`;
+  const clinica = { cnpj: '33512963000123', telefones: ['+556133445566'], nomes: ['Centro de Reabilitacao Oral Dr Walter Vasques'],
+                    cidade: 'Brasília', bairro: 'Asa Sul', genericas: ['odonto', 'odontologia', 'clinica', 'dental'] };
+
+  it('consulta de CNPJ com CNPJ e telefone da empresa NÃO é site próprio', () => {
+    const v = avaliarSitePara('https://empresas.serasaexperian.com.br/consulta-gratis/CENTRO-DE-REABILITACAO-33512963000123',
+      pagina('CNPJ 33.512.963/0001-23 (61) 3344-5566 Walter Vasques Brasília'), clinica, 'busca');
+    expect(v.tipo).toBe('terceiro');
+  });
+  it('guia desconhecido com página profunda e telefone NÃO é site próprio', () => {
+    const v = avaliarSitePara('https://guia.qualquer-coisa.com/distrito-federal/brasilia/walter-vasques-3494756',
+      pagina('Walter Vasques — (61) 3344-5566 — Asa Sul, Brasília'), clinica, 'busca');
+    expect(v.tipo).toBe('terceiro');
+  });
+  it('site de outra clínica não vale para nome genérico', () => {
+    const generica = { ...clinica, cnpj: null, telefones: [], nomes: ['Clinica Odontologica Integrada S/S Ltda'] };
+    expect(tokensDistintivos(generica.nomes, generica.genericas)).toEqual([]);
+    const v = avaliarSitePara('https://premierodontologia.com.br/', pagina('Premier — Clínica Odontológica Integrada em Brasília, Asa Sul'), generica, 'busca');
+    expect(v.tipo).toBe('terceiro');
+  });
+  it('site próprio: domínio com o nome + nome e bairro na página', () => {
+    const v = avaliarSitePara('https://walterodontologia.com.br/', pagina('Dr. Walter Vasques — Reabilitação Oral — Asa Sul'), clinica, 'busca');
+    expect(v.tipo).toBe('proprio');
+  });
+  it('site próprio com domínio diferente do nome: home com o telefone completo', () => {
+    const v = avaliarSitePara('https://reabilitaoral.com.br/', pagina('Agende: (61) 3344-5566'), clinica, 'busca');
+    expect(v.tipo).toBe('proprio');
+  });
+  it('domínio parecido com conteúdo sem relação é descartado', () => {
+    const v = avaliarSitePara('https://walter.com.br/', pagina('Loja de roupas infantis'), clinica, 'nome');
+    expect(v.tipo).toBe('terceiro');
+  });
+  it('e-mail de provedor (brnet) não é site', () => {
+    expect(ehProvedorEmail('brnet.com.br')).toBe(true);
+    const v = avaliarSitePara('https://brnet.com.br/', pagina('Internet banda larga'), { ...clinica, nomes: ['Cisb'] }, 'email');
+    expect(v.tipo).toBe('terceiro');
+  });
+  it('helpers', () => {
+    expect(dominioCombinaComNome('www.estheticalodontologia.com.br', ['Esthetical Odontologia Ltda'])).toBe(true);
+    expect(dominioCombinaComNome('premierodontologia.com.br', ['Via Odontologia'])).toBe(false);
+    expect(paginaRasa('https://x.com.br/')).toBe(true);
+    expect(paginaRasa('https://x.com.br/dentista-asa-norte')).toBe(true);
+    expect(paginaRasa('https://x.com.br/clinicas/df/abc-3494756')).toBe(false);
+  });
+});

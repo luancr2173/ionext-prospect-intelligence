@@ -81,11 +81,21 @@ export interface ContextoFila {
 }
 
 export async function buscarNaWeb(sql: Sql, provedores: ProvedorBusca[], consulta: string, fila: ContextoFila): Promise<SaidaBuscaWeb> {
+  // Cache de 30 dias: reprocessar não gasta cota
+  const [cache] = await sql<{ provedor: string; resultados: ResultadoBusca[] }[]>`
+    select provedor, resultados from motor.cache_busca_web
+     where consulta = ${consulta} and criado_em > now() - interval '30 days'`;
+  if (cache) return { tipo: 'resultados', provedor: `cache:${cache.provedor}`, consulta, resultados: cache.resultados };
+
   const erros: string[] = [];
   for (const p of provedores) {
     if (!(await reservar(sql, p.nome, p.limiteMensal))) continue;
     try {
-      return { tipo: 'resultados', provedor: p.nome, consulta, resultados: await p.buscar(consulta) };
+      const resultados = await p.buscar(consulta);
+      await sql`insert into motor.cache_busca_web (consulta, provedor, resultados)
+                values (${consulta}, ${p.nome}, ${sql.json(resultados as never)})
+                on conflict (consulta) do update set provedor = excluded.provedor, resultados = excluded.resultados, criado_em = now()`;
+      return { tipo: 'resultados', provedor: p.nome, consulta, resultados };
     } catch (e) {
       if (e instanceof CotaEsgotada) { await esgotar(sql, p.nome, p.limiteMensal); continue; }
       erros.push(`${p.nome}: ${(e as Error).message}`);

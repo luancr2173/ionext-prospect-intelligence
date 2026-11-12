@@ -24,7 +24,71 @@ const DIRETORIOS = [
   'yelp.com', 'foursquare.com', 'waze.com', 'reclameaqui.com.br', 'olx.com.br', 'mercadolivre.com.br',
   'zapimoveis.com.br', 'vivareal.com.br', 'imovelweb.com.br', 'webmotors.com.br', 'jusbrasil.com.br',
   'wikipedia.org', 'gympass.com', 'wellhub.com', 'totalpass.com.br', 'trinks.com', 'booksy.com', 'avec.app',
+  // vistos na primeira busca real (consulta de CNPJ, guias, agregadores)
+  'serasaexperian.com.br', 'agendarconsulta.com', 'cebes.com.br', 'dentalgold.com.br', 'dentmap.com.br',
+  'leadhunterpro.app', 'licitario.com.br', 'negociosrio.com.br', 'srwatson.io', 'tavily.com', 'trustindex.io',
+  'b2bseg.com.br', 'unisus.com.br', 'mundopsicologos.com', 'brazildentalrating.com', 'cnes.datasus.gov.br',
+  'cnpj.ws', 'cnpjs.rocks', 'empresascnpj.com', 'consultacnpj.com', 'speedio.com.br', 'diretoriodeempresas.com.br',
 ];
+
+/** Provedores de internet/e-mail: domínio do e-mail não indica site próprio. */
+const PROVEDORES_EMAIL = [
+  'brnet.com.br', 'globo.com', 'globomail.com', 'r7.com', 'oi.com.br', 'click21.com.br', 'superig.com.br',
+  'zipmail.com.br', 'ibest.com.br', 'brturbo.com.br', 'veloxmail.com.br', 'hotmail.com.br', 'outlook.com.br',
+  'yahoo.com', 'ymail.com', 'gmx.com', 'me.com', 'protonmail.com', 'proton.me', 'aol.com', 'zoho.com',
+  'terra.com.br', 'uol.com.br', 'bol.com.br', 'ig.com.br', 'gmail.com', 'hotmail.com', 'outlook.com', 'live.com',
+  'icloud.com', 'msn.com', 'yahoo.com.br', 'net.com.br', 'netsite.com.br', 'correioweb.com.br', 'unb.br',
+];
+
+export function ehProvedorEmail(dominio: string): boolean {
+  const d = dominio.toLowerCase();
+  return PROVEDORES_EMAIL.some((p) => d === p || d.endsWith(`.${p}`));
+}
+
+/** Palavras que aparecem no nome de qualquer empresa do ramo e não identificam ninguém. */
+const GENERICAS = new Set([
+  'clinica', 'clinicas', 'odontologia', 'odontologica', 'odontologico', 'odonto', 'dental', 'dentaria', 'dentario',
+  'dentista', 'dentistas', 'integrada', 'integrado', 'centro', 'instituto', 'saude', 'oral', 'bucal', 'consultorio',
+  'medica', 'medico', 'medicina', 'servicos', 'servico', 'associados', 'sociedade', 'simples', 'brasil', 'brasilia',
+  'especializada', 'especializado', 'reabilitacao', 'estetica', 'ortodontia', 'implantes', 'grupo', 'unidade',
+  'academia', 'restaurante', 'lanchonete', 'barbearia', 'salao', 'beleza', 'auto', 'oficina', 'mecanica',
+  'construtora', 'construcoes', 'engenharia', 'imoveis', 'imobiliaria', 'contabilidade', 'contabil', 'assessoria',
+  'comercio', 'empresa', 'cia', 'filial', 'matriz', 'dr', 'dra', 'ss',
+]);
+
+/** Termos do nome que realmente identificam a empresa (sem genéricos, sem sufixo jurídico, ≥ 3 letras). */
+export function tokensDistintivos(nomes: string[], extras: string[] = []): string[] {
+  const gen = new Set([...GENERICAS, ...extras.map((e) => normalizarNome(e))]);
+  const out = new Set<string>();
+  for (const n of nomes) {
+    for (const t of normalizarNome(n).split(' ')) if (t.length >= 3 && !gen.has(t) && !/^\d+$/.test(t)) out.add(t);
+  }
+  return [...out];
+}
+
+const SUFIXOS_TLD = ['.com.br', '.net.br', '.org.br', '.odo.br', '.med.br', '.adv.br', '.eng.br', '.arq.br', '.com', '.net', '.org', '.br', '.io', '.app', '.site', '.online'];
+
+/** "www.estheticalodontologia.com.br" → "estheticalodontologia" */
+export function rotuloDominio(host: string): string {
+  let h = host.toLowerCase().replace(/^www\./, '');
+  for (const s of SUFIXOS_TLD) if (h.endsWith(s)) { h = h.slice(0, -s.length); break; }
+  return (h.split('.').pop() ?? h).replace(/-/g, '');
+}
+
+/** O domínio tem a "cara" da empresa? Algum termo distintivo do nome aparece no rótulo do domínio. */
+export function dominioCombinaComNome(host: string, nomes: string[], extras: string[] = []): boolean {
+  const rotulo = rotuloDominio(host);
+  return tokensDistintivos(nomes, extras).some((t) => t.length >= 4 ? rotulo.includes(t) : rotulo.startsWith(t) || rotulo.endsWith(t));
+}
+
+/** Página "rasa" (home ou 1 nível, sem IDs/CNPJ no caminho) — páginas de diretório costumam ser profundas e com ID. */
+export function paginaRasa(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const partes = u.pathname.split('/').filter(Boolean);
+    return partes.length <= 1 && !/\d{5,}/.test(u.pathname) && !u.search.includes('id=');
+  } catch { return false; }
+}
 
 export type TipoUrl = { tipo: 'rede'; rede: string } | { tipo: 'diretorio' } | { tipo: 'candidato_site' } | { tipo: 'invalida' };
 
@@ -91,25 +155,29 @@ export interface DadosTitularidade {
   nomes: string[];
   cidade?: string | null;
   bairro?: string | null;
+  /** Palavras genéricas do segmento (ex.: "odonto"), além da lista global */
+  genericas?: string[];
 }
 
 /**
- * O site encontrado é mesmo desta empresa? Precisa de prova:
- * CNPJ na página, OU telefone na página, OU todos os tokens do nome + cidade/bairro.
+ * O conteúdo da página tem prova de que é desta empresa?
+ * CNPJ, OU telefone completo (DDD + número), OU todos os termos DISTINTIVOS do nome + cidade/bairro.
+ * Atenção: diretórios também mostram CNPJ/telefone. Quem decide se a página é o SITE da empresa é
+ * `avaliarSitePara` (domínio compatível ou página rasa), não esta função sozinha.
  */
 export function confirmarTitularidade(html: string, d: DadosTitularidade): { confirmado: boolean; sinais: string[] } {
   const sinais: string[] = [];
   const soDigitos = html.replace(/\D/g, '');
   if (d.cnpj && /^\d{14}$/.test(d.cnpj) && soDigitos.includes(d.cnpj)) sinais.push('cnpj');
   for (const tel of d.telefones ?? []) {
+    // DDD + número completos (evita coincidência de 8 dígitos soltos numa página cheia de números)
     const local = tel.replace(/^\+55/, '');
-    if (local.length >= 10 && soDigitos.includes(local.slice(2))) { sinais.push('telefone'); break; }
+    if (local.length >= 10 && soDigitos.includes(local)) { sinais.push('telefone'); break; }
   }
-  const texto = normalizarNome(html.replace(/<[^>]+>/g, ' '));
-  const temNome = d.nomes.some((n) => {
-    const tokens = normalizarNome(n).split(' ').filter((t) => t.length > 2);
-    return tokens.length > 0 && tokens.every((t) => texto.includes(t));
-  });
+  const texto = ` ${normalizarNome(html.replace(/<[^>]+>/g, ' '))} `;
+  // Só termos distintivos: "Clínica Odontológica Integrada" não confirma nada (qualquer dentista tem isso na página)
+  const distintivos = tokensDistintivos(d.nomes, d.genericas ?? []);
+  const temNome = distintivos.length > 0 && distintivos.every((t) => texto.includes(` ${t} `));
   const temLocal = [d.cidade, d.bairro].some((l) => l && texto.includes(normalizarNome(l)));
   if (temNome && temLocal) sinais.push('nome+local');
   return { confirmado: sinais.length > 0, sinais };
@@ -123,4 +191,40 @@ export function similaridadeNomes(a: string, b: string): number {
   let inter = 0;
   for (const t of ta) if (tb.has(t)) inter++;
   return (2 * inter) / (ta.size + tb.size);
+}
+
+export type OrigemSite = 'osm' | 'email' | 'nome' | 'busca';
+export type VeredictoSite = { tipo: 'proprio'; sinais: string[] } | { tipo: 'fraco'; detalhe: string } | { tipo: 'terceiro'; detalhe: string };
+
+/**
+ * Decide se uma página ATIVA é o site próprio da empresa, conforme a origem do link:
+ * - osm: website declarado no POI casado → próprio.
+ * - email: domínio do e-mail declarado na Receita → próprio se o domínio combina com o nome, ou se a home tem CNPJ/telefone.
+ * - nome/busca: precisa de domínio compatível com o nome + prova no conteúdo; OU página rasa com CNPJ/telefone.
+ *   Páginas profundas em domínio que não é da empresa (diretórios, consultas de CNPJ) → terceiro, mesmo com telefone.
+ */
+export function avaliarSitePara(url: string, html: string, d: DadosTitularidade, origem: OrigemSite): VeredictoSite {
+  const host = hostDe(url) ?? '';
+  if (classificarUrl(url).tipo === 'diretorio') return { tipo: 'terceiro', detalhe: 'diretório/agregador conhecido' };
+  if (origem === 'osm') return { tipo: 'proprio', sinais: ['website do POI no OSM'] };
+
+  const t = confirmarTitularidade(html, d);
+  const forte = t.sinais.includes('cnpj') || t.sinais.includes('telefone');
+  const combina = dominioCombinaComNome(host, d.nomes, d.genericas ?? []);
+  const raso = paginaRasa(url);
+
+  if (origem === 'email') {
+    if (ehProvedorEmail(host)) return { tipo: 'terceiro', detalhe: 'provedor de e-mail' };
+    if (combina) return { tipo: 'proprio', sinais: ['domínio do e-mail declarado combina com o nome', ...t.sinais] };
+    if (raso && forte) return { tipo: 'proprio', sinais: ['domínio do e-mail declarado', ...t.sinais] };
+    return { tipo: 'terceiro', detalhe: 'domínio do e-mail sem relação com o nome e sem CNPJ/telefone na página' };
+  }
+
+  if (combina && t.confirmado) return { tipo: 'proprio', sinais: ['domínio combina com o nome', ...t.sinais] };
+  if (!combina && raso && forte) return { tipo: 'proprio', sinais: ['home com CNPJ/telefone da empresa', ...t.sinais] };
+  const texto = ` ${normalizarNome(html.replace(/<[^>]+>/g, ' '))} `;
+  const distintivos = tokensDistintivos(d.nomes, d.genericas ?? []);
+  const nomeAparece = distintivos.length > 0 && distintivos.every((x) => texto.includes(` ${x} `));
+  if (combina && nomeAparece) return { tipo: 'fraco', detalhe: 'domínio e nome compatíveis, sem CNPJ/telefone/endereço na página' };
+  return { tipo: 'terceiro', detalhe: raso ? 'site sem relação comprovada' : 'página de terceiro (diretório/listagem)' };
 }

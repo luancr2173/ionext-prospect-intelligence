@@ -94,6 +94,31 @@ async function main() {
     return;
   }
 
+  if (comando === 'reprocessar') {
+    const buscaId = s('busca');
+    if (!buscaId) throw new Error('--busca <id> obrigatório');
+    const linhas = await ctx.sql<{ cnpj: string; uf: string; cnae_principal: string }[]>`
+      select e.cnpj, r.uf, r.cnae_principal from busca_resultado br
+        join empresa e on e.id = br.empresa_id
+        join receita.estabelecimento r on r.cnpj = e.cnpj
+       where br.busca_id = ${buscaId}`;
+    await ctx.sql`insert into motor.busca_progresso (busca_id, total) values (${buscaId}, ${linhas.length})
+                  on conflict (busca_id) do update set total = excluded.total, processadas = 0, falhas = 0, atualizado_em = now()`;
+    await ctx.central.atualizarBusca(buscaId, { status: 'executando', concluidas: 0 });
+    const b = await boss(ctx.config.databaseUrl);
+    const rodada = Date.now();
+    for (const l of linhas) {
+      const seg = segmentoPorCnae(l.cnae_principal);
+      if (!seg) continue;
+      await b.send(FILA_VERIFICAR, { busca_id: buscaId, cnpj: l.cnpj, uf: l.uf, segmento: seg.id },
+        { retryLimit: 5, retryBackoff: true, retryDelay: 30, singletonKey: `${buscaId}:${l.cnpj}:${rodada}` });
+    }
+    log(`${linhas.length} empresas da busca ${buscaId} reenviadas para verificação (busca web usa o cache)`);
+    await b.stop({ graceful: true });
+    await ctx.sql.end();
+    return;
+  }
+
   if (comando === 'worker') {
     const b = await boss(ctx.config.databaseUrl);
     await b.work<{ busca_id: string }>(FILA_PLANEJAR, async ([job]) => {
@@ -157,7 +182,7 @@ async function main() {
     return;
   }
 
-  console.log('comandos: carregar-receita | buscar | worker | processar | status');
+  console.log('comandos: carregar-receita | buscar | reprocessar | worker | processar | status');
   await ctx.sql.end();
 }
 
