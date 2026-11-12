@@ -89,7 +89,9 @@ function deslizarAbaCanal(animar) {
     void ind.offsetWidth;
     ind.classList.remove('sem-transicao');
   }
+  if (!animar) ind.classList.add('sem-transicao');
   Object.assign(ind.style, pos(destino));
+  if (!animar) requestAnimationFrame(() => ind.classList.remove('sem-transicao'));
 }
 
 async function api(metodo, caminho, corpo) {
@@ -380,7 +382,7 @@ async function telaEmpresas(params) {
   // abas por canal de contato, com contagem (respeitam os outros filtros)
   const totalCanais = Object.values(r.canais || {}).reduce((a, b) => a + b, 0);
   const aba = (valor, rotulo, n, extra) => h('button', {
-    type: 'button', class: `aba-canal${filtros.canal === valor ? ' ativa' : ''}${extra ? ` ${extra}` : ''}`, onclick: () => navegar({ canal: valor }),
+    type: 'button', 'data-canal': valor, class: `aba-canal${filtros.canal === valor ? ' ativa' : ''}${extra ? ` ${extra}` : ''}`, onclick: () => navegar({ canal: valor }),
   }, rotulo, h('b', {}, (n || 0).toLocaleString('pt-BR')));
 
   // seleção para ações em lote
@@ -578,7 +580,7 @@ async function telaFunil(params) {
       kanban.querySelectorAll('.card-op').forEach((c) => { c.hidden = !!t && !c.dataset.nome.includes(t); });
     } });
 
-  const filtro = (valor, rotulo) => h('a', { class: `aba-canal${canal === valor ? ' ativa' : ''}`, href: `#/funil${valor ? `?canal=${valor}` : ''}` }, rotulo);
+  const filtro = (valor, rotulo) => h('a', { class: `aba-canal${canal === valor ? ' ativa' : ''}`, 'data-canal': valor, href: `#/funil${valor ? `?canal=${valor}` : ''}` }, rotulo);
   $app.replaceChildren(
     h('div', { class: 'cabecalho' }, h('div', {},
       h('span', { class: 'indice mono' }, '(02) — CRM'),
@@ -840,7 +842,16 @@ async function render() {
     (a.dataset.aba === 'inicio' && caminho === '/') || (a.dataset.aba === 'empresas' && caminho.startsWith('/empresa'))
     || (a.dataset.aba === 'funil' && caminho === '/funil')));
   moverIndicador(!primeira);
-  $app.classList.remove('largo');
+  // filtro na mesma tela: a pílula vai para a opção clicada na hora, antes dos dados chegarem
+  if (filtrando && !semMovimento()) {
+    const canalNovo = params.get('canal') || '';
+    const opcoes = $app.querySelectorAll('.abas-canal [data-canal]');
+    if (opcoes.length) {
+      opcoes.forEach((o) => o.classList.toggle('ativa', o.dataset.canal === canalNovo));
+      deslizarAbaCanal(true);
+      lembrarAbaCanal();
+    }
+  }
   try {
     if (caminho === '/') {
       await telaInicio();
@@ -849,6 +860,7 @@ async function render() {
     else if (caminho === '/funil') await telaFunil(params);
     else if (caminho.startsWith('/empresa/')) await telaEmpresa(caminho.split('/')[2]);
     else location.hash = '#/';
+    if (caminho !== '/funil') $app.classList.remove('largo'); // só depois de a tela nova estar pronta (evita o pulo lateral)
     if (novoEndereco) window.scrollTo({ top: 0 });
     if (entrando) {
       if (!semMovimento()) {
@@ -866,7 +878,7 @@ async function render() {
       clearTimeout(render.t);
       render.t = setTimeout(() => $app.classList.remove('filtrando'), 900);
     }
-    deslizarAbaCanal(filtrando);
+    deslizarAbaCanal(false);
   } catch (e) {
     if (e.message !== 'sessão expirada') $app.replaceChildren(h('div', { class: 'vazio' }, `Erro: ${e.message}`));
   } finally {
