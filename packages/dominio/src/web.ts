@@ -55,7 +55,7 @@ const GENERICAS = new Set([
   'construtora', 'construcoes', 'engenharia', 'imoveis', 'imobiliaria', 'contabilidade', 'contabil', 'assessoria',
   'comercio', 'empresa', 'cia', 'filial', 'matriz', 'dr', 'dra', 'ss',
   'odontopediatria', 'endodontia', 'implantodontia', 'periodontia', 'protese', 'radiologia', 'radiologica',
-  'center', 'clinic', 'odontologicos', 'odontologicas', 'especialidades', 'avancada', 'avancado',
+  'center', 'clinic', 'clin', 'odontologicos', 'odontologicas', 'especialidades', 'avancada', 'avancado',
 ]);
 
 /** Sufixos que aparecem colados a uma sigla no domínio/@: "jc"+"dental", "cob"+"odontologia"+"brasilia". */
@@ -102,7 +102,19 @@ function combinaSigla(rotulo: string, nomes: string[], extras: string[]): boolea
 /** O domínio tem a "cara" da empresa? Termo distintivo do nome no rótulo do domínio, ou sigla + complemento genérico. */
 export function dominioCombinaComNome(host: string, nomes: string[], extras: string[] = []): boolean {
   const rotulo = rotuloDominio(host);
-  const porTermo = tokensDistintivos(nomes, extras).some((t) => t.length >= 4 ? rotulo.includes(t) : rotulo.startsWith(t) || rotulo.endsWith(t));
+  // O termo precisa estar "inteiro": no início, no fim, ou colado só a palavras genéricas
+  // (evita "inodonto" casar com "orthocl-inodonto-logia")
+  const naBorda = (t: string) => {
+    let i = rotulo.indexOf(t);
+    while (i >= 0) {
+      const antes = rotulo.slice(0, i);
+      const depois = rotulo.slice(i + t.length);
+      if (antes === '' || depois === '' || soComplemento(antes) || soComplemento(depois)) return true;
+      i = rotulo.indexOf(t, i + 1);
+    }
+    return false;
+  };
+  const porTermo = tokensDistintivos(nomes, extras).some((t) => t.length >= 4 ? naBorda(t) : rotulo.startsWith(t) || rotulo.endsWith(t));
   return porTermo || combinaSigla(rotulo, nomes, extras);
 }
 
@@ -121,16 +133,19 @@ export function perfilCombinaComNome(url: string, titulo: string, nomes: string[
     if (partes.length === 0 || NAO_PERFIL.has(partes[0]!.toLowerCase())) return false;
     handle = partes[0]!.toLowerCase().replace(/^@/, '').replace(/[._-]/g, '');
   } catch { return false; }
-  const distintivos = tokensDistintivos(nomes, extras);
   const tituloNorm = ` ${normalizarNome(titulo)} `;
-  if (distintivos.length > 0) {
-    if (distintivos.every((t) => handle.includes(t))) return true;
-    if (distintivos.every((t) => tituloNorm.includes(` ${t} `))) return true;
-  }
-  if (combinaSigla(handle, nomes, extras)) return true;
-  const sg = siglas(nomes, extras);
-  if (sg.length > 0 && sg.every((x) => tituloNorm.includes(` ${x} `))) return true;
-  return distintivos.length === 0 && sg.length === 0 && nomes.some((n) => similaridadeNomes(n, titulo) >= 0.8);
+  // Cada nome (fantasia, razão social) é avaliado sozinho: basta um bater
+  return nomes.some((nome) => {
+    const distintivos = tokensDistintivos([nome], extras);
+    if (distintivos.length > 0) {
+      if (distintivos.every((t) => handle.includes(t))) return true;
+      if (distintivos.every((t) => tituloNorm.includes(` ${t} `))) return true;
+    }
+    if (combinaSigla(handle, [nome], extras)) return true;
+    const sg = siglas([nome], extras);
+    if (sg.length > 0 && sg.every((x) => tituloNorm.includes(` ${x} `))) return true;
+    return distintivos.length === 0 && sg.length === 0 && similaridadeNomes(nome, titulo) >= 0.8;
+  });
 }
 
 /** Página "rasa" (home ou 1 nível, sem IDs/CNPJ no caminho) — páginas de diretório costumam ser profundas e com ID. */
@@ -228,8 +243,7 @@ export function confirmarTitularidade(html: string, d: DadosTitularidade): { con
   }
   const texto = ` ${normalizarNome(html.replace(/<[^>]+>/g, ' '))} `;
   // Só termos distintivos: "Clínica Odontológica Integrada" não confirma nada (qualquer dentista tem isso na página)
-  const distintivos = tokensDistintivos(d.nomes, d.genericas ?? []);
-  const temNome = distintivos.length > 0 && distintivos.every((t) => texto.includes(` ${t} `));
+  const temNome = nomeApareceNoTexto(texto, d.nomes, d.genericas ?? []);
   const temLocal = [d.cidade, d.bairro].some((l) => l && texto.includes(normalizarNome(l)));
   if (temNome && temLocal) sinais.push('nome+local');
   return { confirmado: sinais.length > 0, sinais };
@@ -243,6 +257,14 @@ export function similaridadeNomes(a: string, b: string): number {
   let inter = 0;
   for (const t of ta) if (tb.has(t)) inter++;
   return (2 * inter) / (ta.size + tb.size);
+}
+
+/** Algum dos nomes (fantasia OU razão social) aparece inteiro no texto (só termos distintivos)? */
+function nomeApareceNoTexto(textoNormalizado: string, nomes: string[], extras: string[]): boolean {
+  return nomes.some((n) => {
+    const d = tokensDistintivos([n], extras);
+    return d.length > 0 && d.every((t) => textoNormalizado.includes(` ${t} `));
+  });
 }
 
 export type OrigemSite = 'osm' | 'email' | 'nome' | 'busca';
@@ -275,8 +297,7 @@ export function avaliarSitePara(url: string, html: string, d: DadosTitularidade,
   if (combina && t.confirmado) return { tipo: 'proprio', sinais: ['domínio combina com o nome', ...t.sinais] };
   if (!combina && raso && forte) return { tipo: 'proprio', sinais: ['home com CNPJ/telefone da empresa', ...t.sinais] };
   const texto = ` ${normalizarNome(html.replace(/<[^>]+>/g, ' '))} `;
-  const distintivos = tokensDistintivos(d.nomes, d.genericas ?? []);
-  const nomeAparece = distintivos.length > 0 && distintivos.every((x) => texto.includes(` ${x} `));
+  const nomeAparece = nomeApareceNoTexto(texto, d.nomes, d.genericas ?? []);
   if (combina && nomeAparece) return { tipo: 'fraco', detalhe: 'domínio e nome compatíveis, sem CNPJ/telefone/endereço na página' };
   // Achado pela busca com o nome da empresa e domínio com a cara dela: na dúvida, revisão humana (nunca "sem site")
   if (combina && origem === 'busca') return { tipo: 'fraco', detalhe: 'domínio parecido com o nome, achado na busca; conferir' };

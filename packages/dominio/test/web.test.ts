@@ -150,3 +150,21 @@ describe('siglas, revisão e Instagram', () => {
     expect(perfilCombinaComNome('https://www.instagram.com/clinicaortoriso?hl=en', 'Excelência em Odontologia (@clinicaortoriso)', ['Orthomaster Odontologia Integrada'], g)).toBe(false);
   });
 });
+
+describe('nome fantasia OU razão social; termo inteiro no domínio', () => {
+  const g = ['odonto', 'odontologia', 'clinica', 'dental'];
+  it('perfil bate com o nome fantasia mesmo se a razão social for outra', () => {
+    const nomes = ['Studio Setti Odontologia Integrada', 'Clinica Odontologica Miranda Ss Ltda'];
+    expect(perfilCombinaComNome('https://www.instagram.com/studiosetti.odonto', 'Studio Setti - Clínica Odontologica (@studiosetti.odonto)', nomes, g)).toBe(true);
+    expect(perfilCombinaComNome('https://www.instagram.com/bagnatoodontologia', 'Bagnato Bagnato (@bagnatoodontologia)', ['Bagnato Odontologia Especializada', 'Nelson Jose Bagnato Ltda'], g)).toBe(true);
+    expect(perfilCombinaComNome('https://www.instagram.com/patblom.endo', 'EndoBlom: Endo com tecnologia (@patblom.endo)', ['Endoblom', 'Coe Clinica Odontologica Especializada Ltda'], g)).toBe(true);
+    expect(perfilCombinaComNome('https://www.instagram.com/drthiagoassad?hl=en', 'Dr. Thiago Assad | Endodontia | Brasília (@drthiagoassad)', ['Centro Especializado de Endodontia', 'Centro Especializado de Endodontia Ltda'], g)).toBe(false);
+    expect(perfilCombinaComNome('https://www.instagram.com/centrovidaodontologia?hl=en', 'Centrovida | Odontologia e Saúde Integrativa', ['Centro Odontologia', 'Centro Odontologia - Servicos Odontologicos Ltda'], g)).toBe(false);
+  });
+  it('termo do nome precisa estar inteiro no domínio', () => {
+    expect(dominioCombinaComNome('orthoclinodontologia.com.br', ['Inodonto'], g)).toBe(false);
+    expect(dominioCombinaComNome('odontologiamontenegro.com.br', ['Clinica Odontologica Montenegro Ltda'], g)).toBe(true);
+    expect(dominioCombinaComNome('drafernandafachini.com.br', ['Fachini Odontologia'], g)).toBe(true);
+    expect(dominioCombinaComNome('clinicaoralpremium.com', ['Oral Clin'], g)).toBe(false);
+  });
+});
