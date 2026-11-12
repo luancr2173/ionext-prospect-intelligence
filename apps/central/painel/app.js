@@ -331,6 +331,7 @@ async function telaEmpresa(id) {
 
       h('div', { class: 'pilha' },
         acoes,
+        cartaoNeo(f.neo),
         h('div', { class: 'cartao' },
           h('h2', {}, 'Contatos'),
           f.contatos.length === 0 ? h('p', { class: 'legenda' }, 'Nenhum contato encontrado.') :
@@ -341,6 +342,25 @@ async function telaEmpresa(id) {
           f.validacao.nao_encontrado.length > 0 && h('p', { class: 'ajuda', style: { marginTop: '12px' } },
             `Não encontrado: ${f.validacao.nao_encontrado.map((x) => x.replace('contato.', '')).join(', ')}`)),
         formVerificacaoManual(e.id))));
+}
+
+function cartaoNeo(neo) {
+  if (!neo) return null;
+  const rotulo = { reservado: 'na fila', enviado: 'enviado', falhou: 'falhou', cancelado: 'cancelado' };
+  const classe = { reservado: 'e-media', enviado: 'e-ok', falhou: 'e-baixa', cancelado: 'e-baixa' };
+  return h('div', { class: 'cartao' },
+    h('h2', {}, 'Neo (WhatsApp)'),
+    neo.whatsapp
+      ? h('p', {}, `Número para abordagem: ${neo.whatsapp.numero}`, h('br'), h('small', { class: 'legenda' }, `celular comercial · fonte: ${neo.whatsapp.fonte}`))
+      : h('p', { class: 'ajuda' }, 'Sem celular comercial confirmado. O Neo não aborda telefone fixo; mesmo aprovada, esta empresa não entra na fila.'),
+    neo.envios.length === 0 ? h('p', { class: 'legenda' }, 'Nenhuma mensagem até agora.') :
+      neo.envios.map((x) => h('div', { class: 'evid' },
+        h('span', { class: `etiqueta ${classe[x.status] || ''}` }, rotulo[x.status] || x.status),
+        h('div', {},
+          h('div', {}, `${x.tipo === 'primeira' ? 'Primeira mensagem' : 'Follow-up'}${x.teste ? ' · teste (foi para o seu número)' : ''}`),
+          x.mensagem && h('div', { class: 'item-sub', style: { whiteSpace: 'pre-wrap' } }, x.mensagem),
+          x.erro && h('div', { class: 'item-sub' }, `Motivo: ${x.erro}`),
+          h('div', { class: 'item-sub' }, quando(x.enviado_em || x.reservado_em))))));
 }
 
 function resumoEvidencia(ev) {

@@ -163,6 +163,8 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(f.validacao.fontes.sort()).toEqual(['osm', 'receita']);
     expect(f.validacao.nao_encontrado).toEqual(expect.arrayContaining(['cnpj', 'contato.whatsapp', 'contato.email']));
     expect(f.empresa.geo).toBeUndefined();
+    expect(f.neo.envios).toEqual([]);
+    expect(f.neo).toHaveProperty('whatsapp');
 
     const m = await app.inject({ method: 'POST', url: `/v1/empresas/${id}/evidencias-manuais`, headers: AUTH,
                                  payload: { tipo: 'avaliacoes', quantidade: 84, nota: 4.8, url: 'https://maps.app.goo.gl/x' } });
