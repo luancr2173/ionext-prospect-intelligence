@@ -15,7 +15,8 @@ if ($db -notmatch '^postgres(ql)?://') { throw "A connection string deve começa
 $tavily = Read-Host "2/3 Chave do Tavily (ou só Enter para pular)"
 $exa    = Read-Host "3/3 Chave da Exa (ou só Enter para pular)"
 
-$segredo = -join ((48..57) + (97..102) | Get-Random -Count 48 | ForEach-Object { [char]$_ })
+# 48 caracteres hex aleatórios (Get-Random -Count não repete itens, por isso o laço)
+$segredo = -join (1..48 | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] })
 
 $conteudo = @"
 DATABASE_URL=$db
