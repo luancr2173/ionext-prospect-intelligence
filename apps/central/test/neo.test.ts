@@ -135,6 +135,38 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(o2!.status).toBe('nova');
   });
 
+  it('ao_receber: resposta da clínica traz o contexto, marca "respondeu" e reconhece opt-out', async () => {
+    await cfg('modo_teste', 'false');
+    const op = await aprovada('Clínica Resposta', '61 99876-0020', 'resp');
+    const [r] = await reservar();
+    await sql`select neo.registrar_envio(${r!.envio_id}, 'Olá! Aqui é o Neo...', true)`;
+
+    const [a] = await sql`select neo.ao_receber('556199876002' || '0@s.whatsapp.net', 'Quero saber mais') as r`;
+    expect(a!.r).toMatchObject({ prospeccao: true, teste: false, pediu_para_nao_receber: false, primeira_mensagem: 'Olá! Aqui é o Neo...' });
+    expect(a!.r.contexto.empresa.nome).toBe('Clínica Resposta');
+    const [o] = await sql`select status from oportunidade where id = ${op}`;
+    expect(o!.status).toBe('respondeu');
+
+    const [b] = await sql`select neo.ao_receber('5561998760020', 'Não tenho interesse, obrigado') as r`;
+    expect(b!.r.pediu_para_nao_receber).toBe(true);
+    const [bloq] = await sql`select count(*)::int as n from opt_out where valor = '+5561998760020'`;
+    expect(bloq!.n).toBe(1);
+
+    const [c] = await sql`select neo.ao_receber('5561911112222', 'oi') as r`;
+    expect(c!.r).toEqual({ prospeccao: false });
+  });
+
+  it('ao_receber no modo teste: liga a resposta do número de teste ao último envio de teste', async () => {
+    const op = await aprovada('Clínica Teste Resposta', '61 99876-0021', 'tresp');
+    const [r] = await reservar();
+    await sql`select neo.registrar_envio(${r!.envio_id}, 'msg de teste', true)`;
+    const [a] = await sql`select neo.ao_receber('5561999990000@s.whatsapp.net', 'ok, quero saber mais') as r`;
+    expect(a!.r).toMatchObject({ prospeccao: true, teste: true });
+    expect(a!.r.contexto.empresa.nome).toBe('Clínica Teste Resposta');
+    const [o] = await sql`select status from oportunidade where id = ${op}`;
+    expect(o!.status).toBe('aprovada_para_contato');
+  });
+
   it('fora da janela de horário não reserva nada', async () => {
     await aprovada('Clínica Horário', '61 99876-0003', 'hora');
     await cfg('dias_semana', '');
