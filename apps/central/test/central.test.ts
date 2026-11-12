@@ -228,4 +228,43 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(r2.motores[0]).toMatchObject({ nome: 'motor-prospecting', dados: { versao: 'prospecting@0.1.0' } });
     expect(r2.motores[0].segundos_atras).toBeLessThan(5);
   });
+
+  it('CRM: canal de contato (WhatsApp x fixo), funil por etapa e aprovação em lote', async () => {
+    const celular = candidata({
+      nome_fantasia: 'Clínica Celular', identificadores: [{ fonte: 'osm', valor: 'node/900' }],
+      endereco: { uf: 'DF', cidade: 'Brasília', bairro: 'Asa Sul', cep: '70300-000', lat: -15.80, lng: -47.89 },
+      contatos: [{ tipo: 'telefone', valor: '(61) 99811-2233', publico_comercial: true, evidencia_ref: 'osm1' }],
+    });
+    const antigo = candidata({
+      nome_fantasia: 'Clínica Celular Antigo', identificadores: [{ fonte: 'osm', valor: 'node/901' }],
+      endereco: { uf: 'DF', cidade: 'Brasília', bairro: 'Guará', cep: '71000-000', lat: -15.83, lng: -47.98 },
+      contatos: [{ tipo: 'telefone', valor: '(61) 8123-4567', publico_comercial: true, evidencia_ref: 'osm1' }],
+    });
+    await ingest([candidata(), celular, antigo]);
+
+    const todas = (await app.inject({ method: 'GET', url: '/v1/empresas', headers: AUTH })).json();
+    expect(todas.canais).toEqual({ whatsapp: 2, fixo: 1 });
+    const zap = (await app.inject({ method: 'GET', url: '/v1/empresas?canal=whatsapp', headers: AUTH })).json();
+    expect(zap.total).toBe(2);
+    expect(zap.itens.map((e: { telefone: string }) => e.telefone).sort()).toEqual(['+5561981234567', '+5561998112233']);
+    expect(zap.canais).toEqual({ whatsapp: 2, fixo: 1 }); // abas continuam mostrando todos os canais
+    const fixo = (await app.inject({ method: 'GET', url: '/v1/empresas?canal=fixo', headers: AUTH })).json();
+    expect(fixo.itens.map((e: { nome_fantasia: string }) => e.nome_fantasia)).toEqual(['Clínica Sorriso Feliz']);
+
+    const ids = zap.itens.map((e: { oportunidade_id: string }) => e.oportunidade_id);
+    const lote = await app.inject({ method: 'POST', url: '/v1/oportunidades/status-em-lote', headers: AUTH, payload: { ids, status: 'aprovada_para_contato' } });
+    expect(lote.json()).toEqual({ atualizadas: 2 });
+
+    const funil = (await app.inject({ method: 'GET', url: '/v1/pipeline', headers: AUTH })).json();
+    expect(funil.etapas.aprovada_para_contato.total).toBe(2);
+    expect(funil.etapas.revisar.total).toBe(1);
+    expect(funil.etapas.revisar.itens[0]).toMatchObject({ nome_fantasia: 'Clínica Sorriso Feliz', canal: 'fixo' });
+    const soZap = (await app.inject({ method: 'GET', url: '/v1/pipeline?canal=whatsapp', headers: AUTH })).json();
+    expect(soZap.etapas.revisar).toBeUndefined();
+
+    // lote não mexe em quem já está no meio da conversa
+    await sql`update oportunidade set status = 'respondeu' where id = ${ids[0]}`;
+    const lote2 = await app.inject({ method: 'POST', url: '/v1/oportunidades/status-em-lote', headers: AUTH, payload: { ids, status: 'descartada' } });
+    expect(lote2.json()).toEqual({ atualizadas: 1 });
+  });
 });

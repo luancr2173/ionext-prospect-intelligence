@@ -15,6 +15,7 @@ const Filtros = z.object({
   status: z.string().optional(),
   busca: z.string().uuid().optional(),
   q: z.string().max(100).optional(),
+  canal: z.enum(['whatsapp', 'fixo', 'email', 'sem_contato']).optional(),
   limite: z.coerce.number().int().min(1).max(200).default(50),
   pagina: z.coerce.number().int().min(1).default(1),
 });
@@ -28,20 +29,43 @@ const VERIFICACOES_VAZIAS: Verificacoes = {
   V4: { status: 'nao_executado' }, V5: { status: 'nao_executado' }, V6: { status: 'nao_executado' },
 };
 
+/**
+ * Canal de contato de cada empresa (aba do painel e cartão do funil):
+ * whatsapp = celular comercial (o Neo só aborda estes); fixo = só telefone fixo;
+ * email = só e-mail; sem_contato = nada público. Use dentro de um select com o alias "e".
+ */
+export function canalLateral(sql: Sql) {
+  return sql`
+    left join lateral (
+      select case when w.numero is not null then 'whatsapp'
+                  when t.valor is not null then 'fixo'
+                  when m.valor is not null then 'email'
+                  else 'sem_contato' end as canal,
+             coalesce(w.numero, t.valor) as telefone
+        from (select 1) d
+        left join lateral (select numero from neo._whatsapp(e.id)) w on true
+        left join lateral (select c.valor_normalizado as valor from contato c
+                            where c.empresa_id = e.id and c.tipo in ('telefone', 'whatsapp')
+                            order by c.criado_em limit 1) t on true
+        left join lateral (select c.valor from contato c where c.empresa_id = e.id and c.tipo = 'email' limit 1) m on true
+    ) ch on true`;
+}
+
 export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
   app.get('/empresas', async (req) => {
     const f = Filtros.parse(req.query);
     const offset = (f.pagina - 1) * f.limite;
-    const linhas = await sql`
+    // filtros sem o canal: as contagens por canal (abas do painel) respeitam os outros filtros
+    const base = sql`
       select e.id, e.nome_fantasia, e.cnpj, e.segmento, e.uf, e.cidade, e.bairro,
              p.classificacao, p.confiabilidade, p.url_site, o.id as oportunidade_id, o.tipo as oportunidade,
-             o.lead_score, o.prioridade, o.status,
-             count(*) over()::int as total
+             o.lead_score, o.prioridade, o.status, ch.canal, ch.telefone
         from empresa e
         left join presenca_digital p on p.empresa_id = e.id
         left join lateral (
           select id, tipo, lead_score, prioridade, status from oportunidade
            where empresa_id = e.id order by lead_score desc nulls last limit 1) o on true
+        ${canalLateral(sql)}
        where true
          ${f.uf ? sql`and e.uf = ${f.uf.toUpperCase()}` : sql``}
          ${f.cidade ? sql`and e.cidade ilike ${f.cidade}` : sql``}
@@ -51,12 +75,20 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
          ${f.prioridade ? sql`and o.prioridade = ${f.prioridade}` : sql``}
          ${f.status ? sql`and o.status = ${f.status}` : sql``}
          ${f.busca ? sql`and exists (select 1 from busca_resultado br where br.busca_id = ${f.busca} and br.empresa_id = e.id)` : sql``}
-         ${f.q ? sql`and (e.nome_normalizado like ${'%' + f.q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '%'} or e.cnpj = ${f.q.replace(/[^0-9A-Za-z]/g, '').toUpperCase()})` : sql``}
-       order by o.lead_score desc nulls last, e.nome_fantasia
-       limit ${f.limite} offset ${offset}`;
+         ${f.q ? sql`and (e.nome_normalizado like ${'%' + f.q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '%'} or e.cnpj = ${f.q.replace(/[^0-9A-Za-z]/g, '').toUpperCase()})` : sql``}`;
+    const [linhas, contagens] = await Promise.all([
+      sql`
+        with base as (${base})
+        select *, count(*) over()::int as total from base
+         ${f.canal ? sql`where canal = ${f.canal}` : sql``}
+         order by lead_score desc nulls last, nome_fantasia
+         limit ${f.limite} offset ${offset}`,
+      sql`with base as (${base}) select canal, count(*)::int as total from base group by canal`,
+    ]);
     return {
       total: linhas[0]?.total ?? 0,
       pagina: f.pagina,
+      canais: Object.fromEntries(contagens.map((c) => [c.canal as string, c.total as number])),
       itens: linhas.map(({ total: _t, ...r }) => r),
     };
   });

@@ -2,6 +2,7 @@ import { SEGMENTOS } from '@ionext/dominio';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Sql } from '../db.ts';
+import { canalLateral } from './empresas.ts';
 
 /** Rotas usadas pelo painel (e úteis para integrações): resumo, segmentos, buscas, status das oportunidades e dos motores. */
 export function rotasPainel(app: FastifyInstance, sql: Sql) {
@@ -44,6 +45,58 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
                           returning id, status`;
     if (!b) return reply.code(409).send({ erro: 'busca não encontrada ou já aguardando reprocessamento' });
     return b;
+  });
+
+  /**
+   * Funil comercial (visão de CRM): oportunidades por etapa, com canal de contato,
+   * último envio do Neo e última interação. "nova" e "revisada" formam a etapa "A revisar".
+   */
+  app.get('/pipeline', async (req) => {
+    const q = z.object({
+      canal: z.enum(['whatsapp', 'fixo', 'email', 'sem_contato']).optional(),
+      por_etapa: z.coerce.number().int().min(1).max(200).default(40),
+    }).parse(req.query);
+    const linhas = await sql`
+      with ops as (
+        select o.id, o.status, o.tipo, o.lead_score, o.prioridade, o.atualizado_em,
+               case when o.status in ('nova', 'revisada') then 'revisar' else o.status end as etapa,
+               e.id as empresa_id, e.nome_fantasia, e.bairro, e.segmento, ch.canal, ch.telefone,
+               (select max(i.registrado_em) from interacao i where i.oportunidade_id = o.id) as ultima_interacao,
+               (select json_build_object('tipo', x.tipo, 'status', x.status, 'quando', coalesce(x.enviado_em, x.reservado_em))
+                  from neo.envio x where x.oportunidade_id = o.id and not x.teste
+                 order by x.reservado_em desc limit 1) as ultimo_envio
+          from oportunidade o
+          join empresa e on e.id = o.empresa_id
+          ${canalLateral(sql)}
+         where o.status in ('nova', 'revisada', 'aprovada_para_contato', 'abordada', 'respondeu', 'reuniao', 'proposta', 'ganha', 'perdida')
+           ${q.canal ? sql`and ch.canal = ${q.canal}` : sql``}
+      )
+      select * from (
+        select ops.*, row_number() over (partition by etapa order by lead_score desc nulls last, atualizado_em desc) as rn,
+               count(*) over (partition by etapa)::int as total_etapa
+          from ops) x
+       where rn <= ${q.por_etapa}
+       order by etapa, rn`;
+    const etapas: Record<string, { total: number; itens: unknown[] }> = {};
+    for (const { rn: _rn, total_etapa, ...r } of linhas) {
+      const k = r.etapa as string;
+      etapas[k] ??= { total: total_etapa as number, itens: [] };
+      etapas[k].itens.push(r);
+    }
+    return { etapas };
+  });
+
+  /** Mesmo status para várias oportunidades (ex.: aprovar 5 clínicas com WhatsApp de uma vez). */
+  app.post('/oportunidades/status-em-lote', async (req) => {
+    const p = z.object({
+      ids: z.array(z.string().uuid()).min(1).max(200),
+      status: z.enum(['revisada', 'aprovada_para_contato', 'descartada']),
+    }).parse(req.body);
+    const linhas = await sql`update oportunidade set status = ${p.status}, responsavel = ${req.cliente}
+                              where id = any(${p.ids}::uuid[]) and status <> ${p.status}
+                                and status in ('nova', 'revisada', 'aprovada_para_contato', 'descartada')
+                              returning id`;
+    return { atualizadas: linhas.length };
   });
 
   /** Mudança de status comercial feita por uma pessoa (aprovar para o Neo, descartar...). */
