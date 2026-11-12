@@ -1,0 +1,20 @@
+{
+  "name": "@ionext/central",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@ionext/contratos": "workspace:*",
+    "@ionext/dominio": "workspace:*",
+    "fastify": "^5.2.0",
+    "postgres": "^3.4.5",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

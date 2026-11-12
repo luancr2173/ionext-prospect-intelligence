@@ -1,0 +1,17 @@
+{
+  "name": "ionext-prospect-intelligence",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p apps/central && tsc -p packages/dominio && tsc -p packages/contratos",
+    "central:dev": "pnpm --filter @ionext/central dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
