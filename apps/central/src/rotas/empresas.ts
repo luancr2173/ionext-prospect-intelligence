@@ -107,7 +107,10 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
       sql`select * from presenca_digital where empresa_id = ${id}`,
       sql`select * from auditoria where empresa_id = ${id} order by executada_em desc`,
       sql`select o.*, coalesce((select json_agg(i order by i.registrado_em desc) from interacao i
-                                where i.oportunidade_id = o.id), '[]') as interacoes
+                                where i.oportunidade_id = o.id), '[]') as interacoes,
+                   coalesce((select json_agg(x order by x.em desc) from oportunidade_etapa x
+                                where x.oportunidade_id = o.id and x.de is not null), '[]') as etapas,
+                   floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa
             from oportunidade o where o.empresa_id = ${id}`,
       sql`select * from revisao_merge where status = 'pendente' and (empresa_a = ${id} or empresa_b = ${id})`,
       sql`select numero, fonte from neo._whatsapp(${id})`,

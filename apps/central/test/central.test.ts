@@ -266,5 +266,32 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     await sql`update oportunidade set status = 'respondeu' where id = ${ids[0]}`;
     const lote2 = await app.inject({ method: 'POST', url: '/v1/oportunidades/status-em-lote', headers: AUTH, payload: { ids, status: 'descartada' } });
     expect(lote2.json()).toEqual({ atualizadas: 1 });
+
+    // tempo na etapa, histórico, "hoje" e conversão
+    const [h1] = await sql`select count(*)::int as n from oportunidade_etapa where oportunidade_id = ${ids[0]} and para = 'respondeu'`;
+    expect(h1!.n).toBe(1);
+    await sql`update oportunidade set status = 'proposta', etapa_desde = now() - interval '12 days' where id = ${ids[1]}`;
+    await sql`update oportunidade set etapa_desde = now() - interval '12 days' where id = ${ids[1]}`;
+    const funil2 = (await app.inject({ method: 'GET', url: '/v1/pipeline', headers: AUTH })).json();
+    expect(funil2.etapas.proposta.itens[0].dias_na_etapa).toBe(12);
+    expect(funil2.prazos.proposta).toBe(10);
+    const hoje = (await app.inject({ method: 'GET', url: '/v1/painel/hoje', headers: AUTH })).json();
+    expect(hoje.itens.map((x: { motivo: string }) => x.motivo).sort()).toEqual(['parada', 'responder']);
+    const resumo = (await app.inject({ method: 'GET', url: '/v1/painel/resumo', headers: AUTH })).json();
+    expect(resumo.funil).toMatchObject({ abordadas: 2, responderam: 2, propostas: 1, ganhas: 0 });
+    // mudar algo que não é o status não reinicia o relógio da etapa
+    await sql`update oportunidade set lead_score = 55 where id = ${ids[1]}`;
+    const [o] = await sql`select floor(extract(epoch from now() - etapa_desde) / 86400)::int as d from oportunidade where id = ${ids[1]}`;
+    expect(o!.d).toBe(12);
+  });
+
+  it('serve ícone, fontes e tema do painel', async () => {
+    const icone = await app.inject({ method: 'GET', url: '/painel/icone.svg' });
+    expect(icone.headers['content-type']).toContain('image/svg+xml');
+    const fonte = await app.inject({ method: 'GET', url: '/painel/fontes/archivo-latin-standard-normal.woff2' });
+    expect(fonte.statusCode).toBe(200);
+    expect(fonte.headers['content-type']).toBe('font/woff2');
+    expect((await app.inject({ method: 'GET', url: '/painel/fontes/..%2F..%2Fpackage.json' })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: '/painel/tema.js' })).statusCode).toBe(200);
   });
 });

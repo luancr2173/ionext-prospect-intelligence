@@ -4,6 +4,9 @@ import { z } from 'zod';
 import type { Sql } from '../db.ts';
 import { canalLateral } from './empresas.ts';
 
+/** Dias numa etapa até a oportunidade ser considerada parada (destaque no funil e na lista "Hoje"). */
+export const PRAZO_ETAPA = { aprovada_para_contato: 3, abordada: 7, respondeu: 1, reuniao: 7, proposta: 10 } as const;
+
 /** Rotas usadas pelo painel (e úteis para integrações): resumo, segmentos, buscas, status das oportunidades e dos motores. */
 export function rotasPainel(app: FastifyInstance, sql: Sql) {
   app.get('/segmentos', async () => SEGMENTOS.map((s) => ({ id: s.id, nome: s.nome, cnaes: s.cnaes })));
@@ -24,7 +27,49 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
     const motores = await sql`select nome, dados, atualizado_em,
                                      extract(epoch from now() - atualizado_em)::int as segundos_atras
                                 from motor_status order by nome`;
-    return { totais, classificacoes, prioridades, motores };
+    // Funil acumulado: quem está numa etapa já passou pelas anteriores ("perdida" conta só como abordada).
+    const [funil] = await sql`
+      select count(*) filter (where status in ('abordada','respondeu','reuniao','proposta','ganha','perdida'))::int as abordadas,
+             count(*) filter (where status in ('respondeu','reuniao','proposta','ganha'))::int as responderam,
+             count(*) filter (where status in ('reuniao','proposta','ganha'))::int as reunioes,
+             count(*) filter (where status in ('proposta','ganha'))::int as propostas,
+             count(*) filter (where status = 'ganha')::int as ganhas,
+             count(*) filter (where status = 'perdida')::int as perdidas
+        from oportunidade`;
+    return { totais, classificacoes, prioridades, motores, funil };
+  });
+
+  /**
+   * "O que fazer hoje": respostas esperando a gente, oportunidades paradas na etapa além do prazo
+   * e as melhores com WhatsApp ainda não aprovadas. Prazos em dias por etapa (PRAZO_ETAPA).
+   */
+  app.get('/painel/hoje', async () => {
+    const itens = await sql`
+      select o.id, o.status, o.lead_score, o.prioridade, o.etapa_desde,
+             floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
+             e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone,
+             case when o.status = 'respondeu' then 'responder'
+                  when o.status in ('nova','revisada') then 'aprovar'
+                  else 'parada' end as motivo
+        from oportunidade o
+        join empresa e on e.id = o.empresa_id
+        ${canalLateral(sql)}
+       where o.status = 'respondeu'
+          or (o.status = 'aprovada_para_contato' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.aprovada_para_contato}))
+          or (o.status = 'abordada' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.abordada}))
+          or (o.status = 'reuniao' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.reuniao}))
+          or (o.status = 'proposta' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.proposta}))
+       order by case when o.status = 'respondeu' then 0 else 1 end, o.etapa_desde asc
+       limit 60`;
+    const aprovar = await sql`
+      select o.id, o.status, o.lead_score, o.prioridade, o.etapa_desde, 0 as dias_na_etapa,
+             e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone, 'aprovar' as motivo
+        from oportunidade o
+        join empresa e on e.id = o.empresa_id
+        ${canalLateral(sql)}
+       where o.status in ('nova','revisada') and ch.canal = 'whatsapp' and o.prioridade = 'alta'
+       order by o.lead_score desc nulls last limit 5`;
+    return { prazos: PRAZO_ETAPA, itens: [...itens, ...aprovar] };
   });
 
   app.get('/buscas', async (req) => {
@@ -58,7 +103,8 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
     }).parse(req.query);
     const linhas = await sql`
       with ops as (
-        select o.id, o.status, o.tipo, o.lead_score, o.prioridade, o.atualizado_em,
+        select o.id, o.status, o.tipo, o.lead_score, o.prioridade, o.atualizado_em, o.etapa_desde,
+               floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
                case when o.status in ('nova', 'revisada') then 'revisar' else o.status end as etapa,
                e.id as empresa_id, e.nome_fantasia, e.bairro, e.segmento, ch.canal, ch.telefone,
                (select max(i.registrado_em) from interacao i where i.oportunidade_id = o.id) as ultima_interacao,
@@ -83,7 +129,7 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
       etapas[k] ??= { total: total_etapa as number, itens: [] };
       etapas[k].itens.push(r);
     }
-    return { etapas };
+    return { etapas, prazos: PRAZO_ETAPA };
   });
 
   /** Mesmo status para várias oportunidades (ex.: aprovar 5 clínicas com WhatsApp de uma vez). */

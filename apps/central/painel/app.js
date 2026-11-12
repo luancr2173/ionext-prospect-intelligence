@@ -137,6 +137,7 @@ function telaLogin() {
     },
   }, senha, erro, h('button', { class: 'botao primario', type: 'submit' }, 'Entrar'));
   $app.replaceChildren(h('div', { class: 'login' }, h('div', { class: 'cartao' },
+    h('img', { class: 'marca-icone', src: '/painel/icone.svg', alt: '' }),
     h('span', { class: 'marca-ionext' }, 'ionext'),
     h('div', { class: 'legenda' }, 'Prospect Intelligence'),
     form)));
@@ -144,7 +145,7 @@ function telaLogin() {
 }
 
 async function telaInicio() {
-  const [resumo, buscas] = await Promise.all([atualizarMotor(), api('GET', '/v1/buscas?limite=15')]);
+  const [resumo, buscas, hoje] = await Promise.all([atualizarMotor(), api('GET', '/v1/buscas?limite=15'), api('GET', '/v1/painel/hoje')]);
   if (!resumo) return;
   const t = resumo.totais;
   const total = resumo.classificacoes.reduce((s, c) => s + c.total, 0);
@@ -159,7 +160,8 @@ async function telaInicio() {
 
   $app.replaceChildren(
     h('div', { class: 'cabecalho' }, h('div', {},
-      h('h1', {}, 'Visão geral'),
+      h('span', { class: 'indice mono' }, '(01) — Painel'),
+      h('h1', {}, 'Visão ', h('em', {}, 'geral')),
       h('p', { class: 'legenda' }, 'Empresas encontradas, verificadas e prontas para virar conversa.'))),
 
     h('div', { class: 'grade grade-4' },
@@ -167,6 +169,8 @@ async function telaInicio() {
       kpi('Oportunidades abertas', t.oportunidades, 'sem site, só redes ou site fraco', true),
       kpi('Alta prioridade', t.alta_prioridade, 'score 70 ou mais'),
       kpi('Aguardando sua revisão', t.aguardando_revisao, t.aprovadas ? `${t.aprovadas} já aprovadas para o Neo` : 'nenhuma aprovada ainda')),
+
+    h('div', { class: 'grade grade-2', style: { marginTop: '16px' } }, cartaoHoje(hoje), cartaoConversao(resumo.funil)),
 
     h('div', { class: 'cartao', style: { marginTop: '16px' } },
       h('h2', {}, 'Presença digital'),
@@ -181,6 +185,53 @@ async function telaInicio() {
       h('div', { class: 'cartao' }, h('h2', {}, 'Buscas'), listaBuscas(buscas)),
       formNovaBusca()),
   );
+}
+
+const MOTIVO = { responder: 'Responder', parada: 'Parada', aprovar: 'Aprovar' };
+const DICA_MOTIVO = {
+  responder: () => 'respondeu — continue a conversa no WhatsApp',
+  aprovar: () => 'alta prioridade com WhatsApp, ainda não aprovada',
+  parada: (x) => `${STATUS[x.status]} há ${x.dias_na_etapa} d sem avançar`,
+};
+
+/** "O que fazer hoje": a primeira coisa que o painel mostra (respostas, paradas, melhores para aprovar). */
+function cartaoHoje(hoje) {
+  const itens = (hoje && hoje.itens) || [];
+  const n = (m) => itens.filter((x) => x.motivo === m).length;
+  return h('div', { class: 'cartao' },
+    h('h2', {}, 'Para ', h('em', {}, 'hoje')),
+    itens.length === 0 ? h('div', { class: 'hoje-vazio' }, 'Tudo em dia: ninguém esperando resposta e nada parado no funil.') :
+      [h('p', { class: 'legenda', style: { margin: '-6px 0 10px' } },
+        [n('responder') && `${n('responder')} esperando resposta`, n('parada') && `${n('parada')} parada${n('parada') > 1 ? 's' : ''}`,
+          n('aprovar') && `${n('aprovar')} para aprovar`].filter(Boolean).join(' · ')),
+      h('div', { class: 'hoje' }, itens.slice(0, 8).map((x) => h('a', { class: 'hoje-item', href: `#/empresa/${x.empresa_id}` },
+        h('span', { class: `razao razao-${x.motivo}` }, MOTIVO[x.motivo]),
+        h('div', {}, h('div', { class: 'item-titulo' }, x.nome_fantasia),
+          h('div', { class: 'item-sub' }, [DICA_MOTIVO[x.motivo](x), x.bairro].filter(Boolean).join(' · '))),
+        chipCanal(x.canal, x.telefone)))),
+      itens.length > 8 && h('a', { class: 'coluna-mais', href: '#/funil' }, `+ ${itens.length - 8} no funil`)]);
+}
+
+/** Conversão entre etapas (Pipedrive/HubSpot): onde as conversas param. */
+function cartaoConversao(f) {
+  f = f || {};
+  const passos = [['Abordadas', f.abordadas], ['Respostas', f.responderam], ['Reuniões', f.reunioes], ['Propostas', f.propostas], ['Ganhas', f.ganhas]];
+  const base = passos[0][1] || 0;
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const fechadas = (f.ganhas || 0) + (f.perdidas || 0);
+  return h('div', { class: 'cartao' },
+    h('h2', {}, 'Con', h('em', {}, 'versão')),
+    base === 0 ? h('p', { class: 'legenda' }, 'Aparece assim que o Neo fizer as primeiras abordagens.') : [
+      h('div', { class: 'conversao' }, passos.map(([rotulo, valor], i) => h('div', { class: 'passo' },
+        h('span', { class: 'passo-rotulo' }, rotulo),
+        h('span', { class: 'trilho' }, h('span', { style: { width: `${Math.max(pct(valor, base), valor ? 2 : 0)}%` } })),
+        h('span', { class: 'passo-valor' }, (valor || 0).toLocaleString('pt-BR')),
+        h('span', { class: 'passo-taxa', title: i === 0 ? '' : `${pct(valor, passos[i - 1][1])}% da etapa anterior` },
+          i === 0 ? '' : `${pct(valor, passos[i - 1][1])}%`)))),
+      h('div', { class: 'rodape-conversao' },
+        h('span', {}, 'Taxa de resposta ', h('b', {}, `${pct(f.responderam, f.abordadas)}%`)),
+        h('span', {}, 'Taxa de ganho ', h('b', {}, fechadas ? `${pct(f.ganhas, fechadas)}%` : '—'), fechadas ? ` (${f.ganhas} de ${fechadas} fechadas)` : ''),
+        h('span', { class: 'ajuda' }, 'Conta a etapa atual de cada oportunidade.'))]);
 }
 
 function listaBuscas(buscas) {
@@ -306,7 +357,8 @@ async function telaEmpresas(params) {
   const paginas = Math.max(1, Math.ceil(r.total / 50));
   $app.replaceChildren(
     h('div', { class: 'cabecalho' }, h('div', {},
-      h('h1', {}, 'Empresas'),
+      h('span', { class: 'indice mono' }, '(03) — Base'),
+      h('h1', {}, 'Empre', h('em', {}, 'sas')),
       h('p', { class: 'legenda' }, `${r.total.toLocaleString('pt-BR')} encontradas${filtros.busca ? ' nesta busca' : ''}, ordenadas por score.`)),
       filtros.busca && h('a', { class: 'botao pequeno', href: '#/empresas' }, 'Ver todas')),
     h('div', { class: 'abas-canal', role: 'tablist', 'aria-label': 'Canal de contato' },
@@ -367,6 +419,17 @@ async function telaFunil(params) {
   const r = await api('GET', `/v1/pipeline${canal ? `?canal=${canal}` : ''}`);
   atualizarMotor();
 
+  const prazos = r.prazos || {};
+  const parada = (op) => prazos[op.etapa] != null && op.dias_na_etapa >= prazos[op.etapa];
+  const diasTexto = (d) => (d < 1 ? 'hoje' : `${d} d`);
+  let dobradas = new Set(['perdida']);
+  try { const salvo = JSON.parse(localStorage.getItem('ionext-funil-dobradas') || 'null'); if (Array.isArray(salvo)) dobradas = new Set(salvo); } catch { /* padrão */ }
+  const alternarDobra = (chave) => {
+    dobradas.has(chave) ? dobradas.delete(chave) : dobradas.add(chave);
+    try { localStorage.setItem('ionext-funil-dobradas', JSON.stringify([...dobradas])); } catch { /* sem storage */ }
+    render();
+  };
+
   const mover = async (op, status) => {
     if (status === 'aprovada_para_contato' && op.canal !== 'whatsapp') aviso('Sem WhatsApp: aprovada, mas o Neo não vai abordar esta empresa.');
     try {
@@ -387,7 +450,8 @@ async function telaFunil(params) {
       ? `Neo: ${envio.tipo === 'primeira' ? '1ª mensagem' : 'follow-up'} ${envio.status === 'enviado' ? 'enviada' : envio.status} ${relativo(envio.quando)}`
       : null;
     return h('article', {
-      class: `card-op${op.canal === 'whatsapp' ? '' : ' sem-zap'}`, draggable: 'true', tabindex: '0',
+      class: `card-op${op.canal === 'whatsapp' ? '' : ' sem-zap'}${parada(op) ? ' parada' : ''}`, draggable: 'true', tabindex: '0',
+      'data-nome': `${op.nome_fantasia} ${op.bairro || ''}`.toLowerCase(),
       ondragstart: (ev) => { ev.dataTransfer.setData('text/plain', op.id); ev.dataTransfer.effectAllowed = 'move'; },
       onclick: () => { location.hash = `#/empresa/${op.empresa_id}`; },
       onkeydown: (ev) => { if (ev.key === 'Enter') location.hash = `#/empresa/${op.empresa_id}`; },
@@ -396,6 +460,8 @@ async function telaFunil(params) {
       h('div', { class: 'item-sub' }, [op.bairro, TIPO_OP[op.tipo]].filter(Boolean).join(' · ')),
       h('div', { class: 'card-linha' }, chipCanal(op.canal, op.telefone), etiquetaPrioridade(op.prioridade)),
       linhaNeo && h('div', { class: 'card-neo' }, linhaNeo),
+      h('div', { class: 'dias', title: `Nesta etapa desde ${quando(op.etapa_desde)}` },
+        parada(op) ? `Parada · ${op.dias_na_etapa} d` : `Na etapa · ${diasTexto(op.dias_na_etapa)}`),
       op.ultima_interacao && h('div', { class: 'card-neo' }, `Última interação ${relativo(op.ultima_interacao)}`),
       menu);
   };
@@ -405,7 +471,8 @@ async function telaFunil(params) {
 
   const coluna = ([chave, rotulo, status]) => {
     const etapa = r.etapas[chave] || { total: 0, itens: [] };
-    const col = h('section', { class: `coluna etapa-${chave}`, 'aria-label': rotulo,
+    const col = h('section', { class: `coluna etapa-${chave}${dobradas.has(chave) ? ' dobrada' : ''}`, 'aria-label': rotulo,
+      onclick: dobradas.has(chave) ? () => alternarDobra(chave) : null,
       ondragover: (ev) => { ev.preventDefault(); col.classList.add('alvo'); },
       ondragleave: () => col.classList.remove('alvo'),
       ondrop: (ev) => {
@@ -413,19 +480,39 @@ async function telaFunil(params) {
         const op = porId.get(ev.dataTransfer.getData('text/plain'));
         if (op && op.etapa !== chave) mover(op, status);
       } },
-      h('header', {}, h('span', {}, rotulo), h('b', {}, etapa.total)),
-      etapa.itens.length === 0 ? h('div', { class: 'coluna-vazia' }, 'Nada aqui') : etapa.itens.map(cartaoOp),
-      etapa.total > etapa.itens.length && h('a', { class: 'coluna-mais', href: `#/empresas?status=${status === 'revisada' ? 'nova' : status}` }, `+ ${etapa.total - etapa.itens.length} na lista`));
+      h('header', {}, h('span', {}, rotulo),
+        h('span', { class: 'coluna-acoes' },
+          etapa.itens.filter(parada).length > 0 && !dobradas.has(chave) && h('span', { class: 'paradas', title: `Paradas há ${prazos[chave]} dias ou mais` }, `${etapa.itens.filter(parada).length} parada${etapa.itens.filter(parada).length > 1 ? 's' : ''}`),
+          h('b', {}, etapa.total),
+          (chave === 'perdida' || chave === 'ganha') && h('button', { class: 'dobrar', type: 'button', title: dobradas.has(chave) ? 'Mostrar coluna' : 'Recolher coluna',
+            'aria-label': dobradas.has(chave) ? `Mostrar ${rotulo}` : `Recolher ${rotulo}`, onclick: (ev) => { ev.stopPropagation(); alternarDobra(chave); } }, dobradas.has(chave) ? '›' : '‹'))),
+      dobradas.has(chave) ? null : etapa.itens.length === 0 ? h('div', { class: 'coluna-vazia' }, 'Nada aqui') : etapa.itens.map(cartaoOp),
+      !dobradas.has(chave) && etapa.total > etapa.itens.length && h('a', { class: 'coluna-mais', href: `#/empresas?status=${status === 'revisada' ? 'nova' : status}` }, `+ ${etapa.total - etapa.itens.length} na lista`));
     return col;
   };
+
+  // colunas recolhidas vão para o fim, estreitas
+  const abertas = ETAPAS.filter(([k]) => !dobradas.has(k));
+  const fechadas = ETAPAS.filter(([k]) => dobradas.has(k));
+  const kanban = h('div', { class: `kanban${fechadas.length ? ' com-dobrada' : ''}`,
+    style: fechadas.length ? { gridTemplateColumns: `repeat(${abertas.length}, minmax(232px, 1fr))${' 52px'.repeat(fechadas.length)}` } : null },
+    [...abertas, ...fechadas].map(coluna));
+  const buscaFunil = h('input', { type: 'search', class: 'busca-funil', placeholder: 'Filtrar cartões…', 'aria-label': 'Filtrar cartões do funil',
+    oninput: () => {
+      const t = buscaFunil.value.trim().toLowerCase();
+      kanban.querySelectorAll('.card-op').forEach((c) => { c.hidden = !!t && !c.dataset.nome.includes(t); });
+    } });
 
   const filtro = (valor, rotulo) => h('a', { class: `aba-canal${canal === valor ? ' ativa' : ''}`, href: `#/funil${valor ? `?canal=${valor}` : ''}` }, rotulo);
   $app.replaceChildren(
     h('div', { class: 'cabecalho' }, h('div', {},
-      h('h1', {}, 'Funil'),
+      h('span', { class: 'indice mono' }, '(02) — CRM'),
+      h('h1', {}, 'Fu', h('em', {}, 'nil')),
       h('p', { class: 'legenda' }, 'Arraste os cartões entre as etapas ou use “Mover para…”. O Neo só aborda quem está em “Na fila do Neo” e tem WhatsApp.'))),
-    h('div', { class: 'abas-canal' }, filtro('', 'Todos os canais'), filtro('whatsapp', 'Com WhatsApp'), filtro('fixo', 'Só telefone fixo')),
-    h('div', { class: 'kanban' }, ETAPAS.map(coluna)));
+    h('div', { class: 'linha-filtros' },
+      h('div', { class: 'abas-canal' }, filtro('', 'Todos os canais'), filtro('whatsapp', 'Com WhatsApp'), filtro('fixo', 'Só telefone fixo')),
+      buscaFunil),
+    kanban);
   $app.classList.add('largo');
 }
 
@@ -458,6 +545,7 @@ async function telaEmpresa(id) {
         chipCanal(f.neo && f.neo.whatsapp ? 'whatsapp' : (f.contatos.some((c) => c.tipo === 'telefone' || c.tipo === 'whatsapp') ? 'fixo' : (f.contatos.some((c) => c.tipo === 'email') ? 'email' : 'sem_contato')),
           f.neo && f.neo.whatsapp ? f.neo.whatsapp.numero : (f.contatos.find((c) => c.tipo === 'telefone') || {}).valor),
         op && h('span', { class: 'etiqueta e-alta' }, STATUS[op.status] || op.status),
+        op && op.dias_na_etapa != null && h('span', { class: 'dias' }, op.dias_na_etapa < 1 ? 'nesta etapa desde hoje' : `nesta etapa há ${op.dias_na_etapa} d`),
         etiquetaClasse(p && p.classificacao),
         op && etiquetaPrioridade(op.prioridade),
         op && h('span', { class: 'etiqueta' }, `Score ${op.lead_score}`),
@@ -515,6 +603,8 @@ function linhaDoTempo(f, op) {
     if (i.registrado_por === 'neo' && i.direcao === 'saida' && /^(Primeira mensagem|Follow-up):/.test(i.resumo)) return; // já aparece pelo envio
     eventos.push({ quando: i.registrado_em, tipo: i.direcao, titulo: i.direcao === 'entrada' ? 'Resposta da empresa' : `Anotação · ${i.registrado_por}`, texto: i.resumo });
   });
+  (op ? op.etapas || [] : []).forEach((x) => eventos.push({
+    quando: x.em, tipo: 'etapa', titulo: `${STATUS[x.de] || x.de} → ${STATUS[x.para] || x.para}${x.por ? ` · ${x.por}` : ''}` }));
   eventos.sort((a, b) => new Date(b.quando) - new Date(a.quando));
   const registrar = h('textarea', { rows: '2', placeholder: 'Anotar: ligação, combinado, próximo passo…' });
   const salvar = h('button', { class: 'botao pequeno', onclick: async () => {
@@ -690,6 +780,34 @@ async function iniciar() {
   SEGMENTOS = await api('GET', '/v1/segmentos');
   render();
 }
+
+// tema claro/escuro (tema.js já aplicou o salvo antes de pintar)
+const corTema = () => document.querySelector('meta[name=theme-color]')
+  .setAttribute('content', document.documentElement.dataset.theme === 'light' ? '#f4f2ee' : '#0a0a0c');
+corTema();
+document.getElementById('tema').addEventListener('click', () => {
+  const raiz = document.documentElement;
+  const novo = raiz.dataset.theme === 'light' ? 'dark' : 'light';
+  raiz.classList.add('trocando-tema');
+  raiz.dataset.theme = novo;
+  try { localStorage.setItem('ionext-tema', novo); } catch { /* sem storage */ }
+  corTema();
+  setTimeout(() => raiz.classList.remove('trocando-tema'), 400);
+});
+
+// busca rápida no topo; atalho "/"
+const campoBusca = document.getElementById('busca-rapida-campo');
+document.getElementById('busca-rapida').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const t = campoBusca.value.trim();
+  location.hash = t ? `#/empresas?q=${encodeURIComponent(t)}` : '#/empresas';
+  campoBusca.blur();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== '/' || ev.ctrlKey || ev.metaKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
+  if (getComputedStyle(campoBusca.parentElement).display === 'none') return;
+  ev.preventDefault(); campoBusca.focus();
+});
 
 window.addEventListener('hashchange', render);
 document.getElementById('sair').addEventListener('click', async () => { await api('POST', '/painel/sair'); telaLogin(); });

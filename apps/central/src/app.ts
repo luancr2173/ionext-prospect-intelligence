@@ -17,7 +17,10 @@ const ARQUIVOS_PAINEL: Record<string, string> = {
   'index.html': 'text/html; charset=utf-8',
   'app.js': 'text/javascript; charset=utf-8',
   'style.css': 'text/css; charset=utf-8',
+  'tema.js': 'text/javascript; charset=utf-8',
+  'icone.svg': 'image/svg+xml',
 };
+const FONTES = new Set(['archivo-latin-standard-normal.woff2', 'instrument-serif-latin-400-italic.woff2', 'jetbrains-mono-latin-wght-normal.woff2']);
 
 declare module 'fastify' {
   interface FastifyRequest { cliente: string }
@@ -50,7 +53,13 @@ export function criarApp(sql: Sql, apiKeys: Map<string, string>, opts: OpcoesApp
       .send(corpo);
   };
   app.get('/', async (_req, reply) => servir('index.html', reply));
-  app.get('/favicon.ico', async (_req, reply) => reply.code(204).send());
+  app.get('/favicon.ico', async (_req, reply) => reply.redirect('/painel/icone.svg'));
+  app.get('/painel/fontes/:arquivo', async (req, reply) => {
+    const { arquivo } = req.params as { arquivo: string };
+    if (!FONTES.has(arquivo)) return reply.code(404).send({ erro: 'não encontrado' });
+    return reply.header('content-type', 'font/woff2').header('cache-control', 'public, max-age=31536000, immutable')
+      .send(await readFile(join(PASTA_PAINEL, 'fontes', arquivo)));
+  });
   app.get('/painel/:arquivo', async (req, reply) => servir((req.params as { arquivo: string }).arquivo, reply));
   app.get('/painel/sessao', async (req) => ({ habilitado: !!painelSenha, logado: sessaoValida(req.headers.cookie) }));
   app.post('/painel/login', async (req, reply) => {
