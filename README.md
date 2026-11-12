@@ -51,6 +51,17 @@ TEST_DATABASE_URL=postgres://postgres@localhost:54329/postgres pnpm test
 
 Nunca aponte `TEST_DATABASE_URL` para o Supabase de produção.
 
+## Rodando no Windows (sem Docker)
+
+```powershell
+cd $HOME\Desktop\ionext\ionext-prospect-intelligence
+git pull
+pnpm install
+powershell -ExecutionPolicy Bypass -File .\configurar.ps1   # uma vez: cria o .env (pergunta uma coisa por vez)
+powershell -ExecutionPolicy Bypass -File .\iniciar.ps1      # abre as janelas da Central e do Motor 01
+```
+A Central e o Motor leem o `.env` da raiz automaticamente.
+
 ## Motor 01 — como rodar a primeira busca
 
 1. **Baixe a base da Receita** (mensal) em [dados.gov.br › Cadastro Nacional da Pessoa Jurídica](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj) e coloque numa pasta `dados-receita/`:

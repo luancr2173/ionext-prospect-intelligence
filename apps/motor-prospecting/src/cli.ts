@@ -8,7 +8,7 @@
  */
 import { parseArgs } from 'node:util';
 import PgBoss from 'pg-boss';
-import { SEGMENTOS, TODOS_CNAES_ALVO, segmentoPorCnae, segmentoPorId } from '@ionext/dominio';
+import { SEGMENTOS, TODOS_CNAES_ALVO, carregarEnv, segmentoPorCnae, segmentoPorId } from '@ionext/dominio';
 import { lerConfigMotor } from './config.ts';
 import { conectar } from './db.ts';
 import { redeReal } from './http.ts';
@@ -46,6 +46,7 @@ async function boss(databaseUrl: string) {
 }
 
 async function main() {
+  carregarEnv();
   const [comando, ...resto] = process.argv.slice(2);
   const { values: a } = parseArgs({
     args: resto, strict: false,

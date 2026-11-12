@@ -1,7 +1,9 @@
+import { carregarEnv } from '@ionext/dominio';
 import { criarApp } from './app.ts';
 import { lerConfig } from './config.ts';
 import { conectar } from './db.ts';
 
+carregarEnv();
 const cfg = lerConfig();
 const sql = conectar(cfg.databaseUrl);
 const app = criarApp(sql, cfg.apiKeys);
