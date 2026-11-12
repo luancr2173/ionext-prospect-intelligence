@@ -80,8 +80,18 @@ export async function recalcularOportunidade(db: Db, empresaId: string, hoje = n
         set lead_score = excluded.lead_score,
             score_detalhe = excluded.score_detalhe,
             prioridade = excluded.prioridade,
-            status = case when ${optout} then 'descartada' else oportunidade.status end`;
+            status = case when ${optout} then 'descartada'
+                          when oportunidade.status = 'obsoleta' then 'nova'
+                          else oportunidade.status end`;
   }
+  // A classificação mudou (ex.: reprocesso achou o site): a oportunidade antiga não vale mais.
+  // Só fecha as que ainda não foram abordadas; o histórico de contato fica intacto.
+  await db`
+    update oportunidade set status = 'obsoleta'
+     where empresa_id = ${empresaId}
+       and tipo is distinct from ${tipo}
+       and tipo in ('A', 'B')
+       and status in ('nova', 'revisada', 'aprovada_para_contato')`;
   return { classificacao: pres.classificacao, score, tipo };
 }
 

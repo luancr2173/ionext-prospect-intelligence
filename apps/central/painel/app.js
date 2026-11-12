@@ -61,7 +61,7 @@ const CLASSES = {
 };
 const STATUS = {
   nova: 'Nova', revisada: 'Revisada', aprovada_para_contato: 'Aprovada para o Neo', abordada: 'Abordada',
-  respondeu: 'Respondeu', reuniao: 'Reunião', proposta: 'Proposta', ganha: 'Ganha', perdida: 'Perdida', descartada: 'Descartada',
+  respondeu: 'Respondeu', reuniao: 'Reunião', proposta: 'Proposta', ganha: 'Ganha', perdida: 'Perdida', descartada: 'Descartada', obsoleta: 'Desatualizada',
 };
 const STATUS_BUSCA = { planejada: 'Na fila', executando: 'Em andamento', concluida: 'Concluída', falhou: 'Falhou', cancelada: 'Cancelada', reprocessar: 'Reprocessando' };
 const VERIF = {
@@ -275,7 +275,7 @@ async function telaEmpresa(id) {
   const f = await api('GET', `/v1/empresas/${id}`);
   const e = f.empresa;
   const p = f.presenca_digital;
-  const ops = f.oportunidades.filter((o) => o.status !== 'descartada').sort((a, b) => (b.lead_score || 0) - (a.lead_score || 0));
+  const ops = f.oportunidades.filter((o) => o.status !== 'descartada' && o.status !== 'obsoleta').sort((a, b) => (b.lead_score || 0) - (a.lead_score || 0));
   const op = ops[0] || f.oportunidades[0] || null;
   const verif = p ? p.verificacoes : null;
 

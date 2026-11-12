@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { criarApp } from '../src/app.ts';
 import { conectar, type Sql } from '../src/db.ts';
+import { recalcularOportunidade } from '../src/servicos/oportunidade.ts';
 
 const URL = process.env.TEST_DATABASE_URL;
 const SEGREDO = 'n'.repeat(40);
@@ -117,6 +118,21 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
       await sql`select neo.registrar_envio(${r!.envio_id}, 'x', false, 'Validação: teste')`;
     }
     expect(await reservar()).toHaveLength(0);
+  });
+
+  it('classificação mudou (achou o site): oportunidade A fica desatualizada e sai da fila; volta se mudar de novo', async () => {
+    const op = await aprovada('Clínica Achou Site', '61 99876-0011', 'achou');
+    const [{ empresa_id }] = await sql`select empresa_id from oportunidade where id = ${op}` as unknown as [{ empresa_id: string }];
+    await sql`update presenca_digital set classificacao = 'SITE_EXISTENTE' where empresa_id = ${empresa_id}`;
+    await recalcularOportunidade(sql, empresa_id);
+    const [o] = await sql`select status from oportunidade where id = ${op}`;
+    expect(o!.status).toBe('obsoleta');
+    expect(await reservar()).toHaveLength(0);
+
+    await sql`update presenca_digital set classificacao = 'SEM_SITE' where empresa_id = ${empresa_id}`;
+    await recalcularOportunidade(sql, empresa_id);
+    const [o2] = await sql`select status from oportunidade where id = ${op}`;
+    expect(o2!.status).toBe('nova');
   });
 
   it('fora da janela de horário não reserva nada', async () => {

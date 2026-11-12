@@ -50,7 +50,7 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
   app.patch('/oportunidades/:id', async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const p = z.object({
-      status: z.enum(['nova', 'revisada', 'aprovada_para_contato', 'abordada', 'respondeu', 'reuniao', 'proposta', 'ganha', 'perdida', 'descartada']),
+      status: z.enum(['nova', 'revisada', 'aprovada_para_contato', 'abordada', 'respondeu', 'reuniao', 'proposta', 'ganha', 'perdida', 'descartada', 'obsoleta']),
       observacao: z.string().max(1000).optional(),
     }).parse(req.body);
     const [o] = await sql`update oportunidade set status = ${p.status}, responsavel = ${req.cliente}
