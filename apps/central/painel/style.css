@@ -415,3 +415,22 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* troca de filtro na mesma tela: só o conteúdo filtrado se mexe */
+.abas-canal { position: relative; }
+.abas-canal.com-indicador .aba-canal { position: relative; z-index: 1; }
+.abas-canal.com-indicador .aba-canal.ativa { background: transparent; border-color: transparent; }
+.canal-indicador { position: absolute; top: 0; left: 0; border-radius: 999px; background: var(--superficie-2); border: 1px solid var(--linha-forte);
+  z-index: 0; pointer-events: none; transition: transform .5s var(--suave-saida), width .5s var(--suave-saida), height .5s var(--suave-saida); }
+.canal-indicador.sem-transicao { transition: none; }
+.trocando .kanban, .trocando .tabela tbody, .trocando .paginacao, .trocando .cabecalho .legenda { opacity: .3; transition: opacity .15s; }
+.filtrando .coluna > header b, .filtrando .card-op, .filtrando .coluna-vazia, .filtrando .tabela tbody tr, .filtrando .cabecalho .legenda {
+  animation: entrar .55s var(--suave-saida) both; }
+.filtrando .coluna:nth-child(3) .card-op { animation-delay: .03s; }
+.filtrando .coluna:nth-child(4) .card-op { animation-delay: .06s; }
+.filtrando .coluna:nth-child(5) .card-op { animation-delay: .09s; }
+.filtrando .coluna:nth-child(n+6) .card-op { animation-delay: .12s; }
+.filtrando .card-op:nth-of-type(n+2) { animation-duration: .65s; }
+.filtrando .tabela tbody tr:nth-child(n+3) { animation-delay: .04s; }
+.filtrando .tabela tbody tr:nth-child(n+6) { animation-delay: .08s; }
+.filtrando .tabela tbody tr:nth-child(n+10) { animation-delay: .12s; }

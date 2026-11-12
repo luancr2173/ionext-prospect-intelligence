@@ -66,7 +66,31 @@ function moverIndicador(animar) {
   Object.assign(ind.style, { opacity: '1', width: `${ativa.offsetWidth}px`, transform: `translateX(${ativa.offsetLeft - 3}px)` });
   if (!animar) requestAnimationFrame(() => ind.classList.remove('sem-transicao'));
 }
-window.addEventListener('resize', () => moverIndicador(false));
+window.addEventListener('resize', () => { moverIndicador(false); deslizarAbaCanal(false); });
+
+/** Filtros de canal (Funil e Empresas): a pílula sai da opção anterior e desliza até a nova. */
+let abaCanalAnterior = null;
+function lembrarAbaCanal() {
+  const a = $app.querySelector('.abas-canal .aba-canal.ativa');
+  abaCanalAnterior = a ? { left: a.offsetLeft, top: a.offsetTop, width: a.offsetWidth, height: a.offsetHeight } : null;
+}
+function deslizarAbaCanal(animar) {
+  const grupo = $app.querySelector('.abas-canal');
+  const ativa = grupo && grupo.querySelector('.aba-canal.ativa');
+  if (!grupo || !ativa) return;
+  grupo.classList.add('com-indicador');
+  let ind = grupo.querySelector('.canal-indicador');
+  if (!ind) { ind = h('span', { class: 'canal-indicador', 'aria-hidden': 'true' }); grupo.prepend(ind); }
+  const pos = (r) => ({ width: `${r.width}px`, height: `${r.height}px`, transform: `translate(${r.left}px, ${r.top}px)` });
+  const destino = { left: ativa.offsetLeft, top: ativa.offsetTop, width: ativa.offsetWidth, height: ativa.offsetHeight };
+  if (animar && abaCanalAnterior && !semMovimento()) {
+    ind.classList.add('sem-transicao');
+    Object.assign(ind.style, pos(abaCanalAnterior));
+    void ind.offsetWidth;
+    ind.classList.remove('sem-transicao');
+  }
+  Object.assign(ind.style, pos(destino));
+}
 
 async function api(metodo, caminho, corpo) {
   const r = await fetch(caminho, {
@@ -800,12 +824,17 @@ let ultimaTela = null;
 async function render() {
   clearInterval(timerAtualizacao);
   const [caminho, qs] = (location.hash.slice(1) || '/').split('?');
-  const entrando = caminho !== ultimaTela;
-  const primeira = ultimaTela === null;
   const novoEndereco = location.hash !== render.hash;
   render.hash = location.hash;
+  const entrando = caminho !== ultimaTela;
+  const primeira = ultimaTela === null;
   ultimaTela = caminho;
-  if (entrando && !semMovimento()) $app.classList.add('saindo');
+  const filtrando = !entrando && novoEndereco;
+  if (!semMovimento()) {
+    if (entrando) $app.classList.add('saindo');
+    else if (filtrando) $app.classList.add('trocando');
+    lembrarAbaCanal();
+  }
   const params = new URLSearchParams(qs || '');
   document.querySelectorAll('.abas a').forEach((a) => a.classList.toggle('ativa',
     (a.dataset.aba === 'inicio' && caminho === '/') || (a.dataset.aba === 'empresas' && caminho.startsWith('/empresa'))
@@ -830,11 +859,18 @@ async function render() {
         clearTimeout(render.t);
         render.t = setTimeout(() => $app.classList.remove('entrando'), 1200);
       }
+    } else if (filtrando && !semMovimento()) {
+      $app.classList.remove('filtrando');
+      void $app.offsetWidth;
+      $app.classList.add('filtrando');
+      clearTimeout(render.t);
+      render.t = setTimeout(() => $app.classList.remove('filtrando'), 900);
     }
+    deslizarAbaCanal(filtrando);
   } catch (e) {
     if (e.message !== 'sessão expirada') $app.replaceChildren(h('div', { class: 'vazio' }, `Erro: ${e.message}`));
   } finally {
-    $app.classList.remove('saindo');
+    $app.classList.remove('saindo', 'trocando');
   }
 }
 
