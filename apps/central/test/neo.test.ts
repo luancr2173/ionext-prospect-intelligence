@@ -176,6 +176,19 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(await reservar()).toHaveLength(0);
   });
 
+  it('portfólio só entra no contexto quando o link estiver configurado', async () => {
+    const op = await aprovada('Clínica Portfólio', '61 99876-0030', 'portf');
+    await cfg('portfolio_url', '');
+    const [a] = await sql`select neo.montar_contexto(${op}) as c`;
+    expect(a!.c.portfolio).toBeNull();
+    await cfg('portfolio_url', 'https://ionext.com.br/portfolio');
+    const [b] = await sql`select neo.montar_contexto(${op}) as c`;
+    expect(b!.c.portfolio.url).toBe('https://ionext.com.br/portfolio');
+    expect(b!.c.portfolio.como_apresentar).toContain('Nunca diga');
+    expect(b!.c.servicos_depois_do_diagnostico.length).toBeGreaterThan(0);
+    await cfg('portfolio_url', '');
+  });
+
   it('fora da janela de horário não reserva nada', async () => {
     await aprovada('Clínica Horário', '61 99876-0003', 'hora');
     await cfg('dias_semana', '');
