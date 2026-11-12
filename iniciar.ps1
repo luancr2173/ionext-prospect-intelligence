@@ -1,16 +1,31 @@
-﻿# Abre a Central e o worker do Motor 01 em duas janelas. Rode com:
+﻿# Sobe a Central + o Motor 01 nesta janela e abre o painel no navegador.
 #   powershell -ExecutionPolicy Bypass -File .\iniciar.ps1
+# Para parar: Ctrl+C nesta janela.
 $ErrorActionPreference = 'Stop'
-$raiz = $PSScriptRoot
-if (-not (Test-Path (Join-Path $raiz '.env'))) {
+Set-Location $PSScriptRoot
+$env_ = Join-Path $PSScriptRoot '.env'
+if (-not (Test-Path $env_)) {
   throw "Falta o .env. Rode antes: powershell -ExecutionPolicy Bypass -File .\configurar.ps1"
 }
 
-Start-Process powershell -WorkingDirectory $raiz -ArgumentList '-NoExit', '-Command', 'pnpm central:dev'
-Write-Host "Central abrindo... aguardando 10 s"
-Start-Sleep 10
-Start-Process powershell -WorkingDirectory $raiz -ArgumentList '-NoExit', '-Command', 'pnpm --filter @ionext/motor-prospecting worker'
+# Senha do painel (pergunta só na primeira vez)
+if (-not (Select-String -Path $env_ -Pattern '^PAINEL_SENHA=.{8,}' -Quiet)) {
+  do { $senha = Read-Host "Crie uma senha para o painel (mínimo 8 caracteres, sem espaços)" } while ($senha.Length -lt 8 -or $senha -match '\s')
+  $linhas = @(Get-Content $env_ | Where-Object { $_ -notmatch '^PAINEL_SENHA=' }) + "PAINEL_SENHA=$senha"
+  [System.IO.File]::WriteAllText($env_, ($linhas -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+  Write-Host "Senha do painel salva no .env" -ForegroundColor Green
+}
+
+# Remove variáveis antigas desta janela para valer o que está no .env
+'DATABASE_URL','CENTRAL_API_KEYS','CENTRAL_API_KEY','CENTRAL_URL','TAVILY_API_KEY','EXA_API_KEY','PAINEL_SENHA' |
+  ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
+
+# Abre o painel quando a Central já estiver no ar
+Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 12; Start-Process http://localhost:3333'
+
 Write-Host ""
-Write-Host "Pronto: duas janelas abertas (Central e Motor 01). Deixe as duas abertas." -ForegroundColor Green
-Write-Host "Para criar uma busca, nesta janela:"
-Write-Host '  pnpm --filter @ionext/motor-prospecting cli buscar --segmento clinica_odontologica --uf DF --cidade Brasilia --bairros "Asa Norte,Taguatinga,Aguas Claras" --quantidade 100'
+Write-Host "IONEXT Prospect Intelligence subindo (Central + Motor 01)..." -ForegroundColor Cyan
+Write-Host "O painel abre sozinho em http://localhost:3333. Para parar: Ctrl+C."
+Write-Host ""
+pnpm install --silent
+pnpm start

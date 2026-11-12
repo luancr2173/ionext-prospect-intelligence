@@ -13,6 +13,8 @@ const Filtros = z.object({
   classificacao: z.enum(['SEM_SITE', 'SOMENTE_REDES', 'PRESENCA_FRACA', 'SITE_EXISTENTE', 'PENDENTE']).optional(),
   prioridade: z.enum(['alta', 'media', 'baixa']).optional(),
   status: z.string().optional(),
+  busca: z.string().uuid().optional(),
+  q: z.string().max(100).optional(),
   limite: z.coerce.number().int().min(1).max(200).default(50),
   pagina: z.coerce.number().int().min(1).default(1),
 });
@@ -31,13 +33,14 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
     const f = Filtros.parse(req.query);
     const offset = (f.pagina - 1) * f.limite;
     const linhas = await sql`
-      select e.id, e.nome_fantasia, e.segmento, e.uf, e.cidade, e.bairro,
-             p.classificacao, p.confiabilidade, o.tipo as oportunidade, o.lead_score, o.prioridade, o.status,
+      select e.id, e.nome_fantasia, e.cnpj, e.segmento, e.uf, e.cidade, e.bairro,
+             p.classificacao, p.confiabilidade, p.url_site, o.id as oportunidade_id, o.tipo as oportunidade,
+             o.lead_score, o.prioridade, o.status,
              count(*) over()::int as total
         from empresa e
         left join presenca_digital p on p.empresa_id = e.id
         left join lateral (
-          select tipo, lead_score, prioridade, status from oportunidade
+          select id, tipo, lead_score, prioridade, status from oportunidade
            where empresa_id = e.id order by lead_score desc nulls last limit 1) o on true
        where true
          ${f.uf ? sql`and e.uf = ${f.uf.toUpperCase()}` : sql``}
@@ -47,6 +50,8 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
          ${f.classificacao ? sql`and p.classificacao = ${f.classificacao}` : sql``}
          ${f.prioridade ? sql`and o.prioridade = ${f.prioridade}` : sql``}
          ${f.status ? sql`and o.status = ${f.status}` : sql``}
+         ${f.busca ? sql`and exists (select 1 from busca_resultado br where br.busca_id = ${f.busca} and br.empresa_id = e.id)` : sql``}
+         ${f.q ? sql`and (e.nome_normalizado like ${'%' + f.q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '%'} or e.cnpj = ${f.q.replace(/[^0-9A-Za-z]/g, '').toUpperCase()})` : sql``}
        order by o.lead_score desc nulls last, e.nome_fantasia
        limit ${f.limite} offset ${offset}`;
     return {

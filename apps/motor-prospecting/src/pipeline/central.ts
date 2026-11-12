@@ -36,6 +36,12 @@ export class ClienteCentral {
   atualizarBusca(id: string, p: { status?: string; total_celulas?: number; concluidas?: number }) {
     return this.req('PATCH', `/v1/buscas/${id}`, p);
   }
+  listarBuscas(status: string[]) {
+    return this.req<{ id: string; status: string }[]>('GET', `/v1/buscas?status=${encodeURIComponent(status.join(','))}`);
+  }
+  reportarStatus(nome: string, dados: Record<string, unknown>) {
+    return this.req('PUT', `/v1/motores/${nome}`, dados);
+  }
   enviar(candidatas: EmpresaCandidata[], busca_id: string | null) {
     return this.req<RespostaIngest>('POST', '/v1/ingest/candidatas', { motor: VERSAO_MOTOR, busca_id, candidatas });
   }

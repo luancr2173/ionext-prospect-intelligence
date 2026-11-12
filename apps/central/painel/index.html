@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IONEXT · Prospect Intelligence</title>
+  <link rel="stylesheet" href="/painel/style.css">
+</head>
+<body>
+  <header class="topo" id="topo" hidden>
+    <a class="marca" href="#/">
+      <span class="marca-ionext">ionext</span>
+      <span class="marca-produto">Prospect Intelligence</span>
+    </a>
+    <nav class="abas">
+      <a href="#/" data-aba="inicio">Visão geral</a>
+      <a href="#/empresas" data-aba="empresas">Empresas</a>
+    </nav>
+    <div class="motor" id="motor" title="Estado do Motor 01">
+      <span class="ponto"></span><span class="motor-texto">Motor 01</span>
+    </div>
+    <button class="botao-texto" id="sair" type="button">Sair</button>
+  </header>
+
+  <main id="app" class="conteudo"></main>
+
+  <div class="aviso" id="aviso" role="status" aria-live="polite" hidden></div>
+  <script src="/painel/app.js"></script>
+</body>
+</html>

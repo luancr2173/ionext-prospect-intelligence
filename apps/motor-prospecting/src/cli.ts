@@ -14,7 +14,8 @@ import { conectar } from './db.ts';
 import { redeReal } from './http.ts';
 import { ClienteCentral } from './pipeline/central.ts';
 import {
-  consumirFilaClaude, planejarBusca, registrarProgresso, verificarEmpresa, type Contexto, type JobVerificar,
+  consumirFilaClaude, metricasMotor, planejarBusca, prepararReprocesso, registrarProgresso, verificarEmpresa,
+  type Contexto, type JobVerificar,
 } from './pipeline/orquestracao.ts';
 import { processarEstabelecimento } from './pipeline/processar.ts';
 import { carregarReceita } from './receita/etl.ts';
@@ -86,10 +87,7 @@ async function main() {
       portes: (s('portes')?.split(',').map((p) => p.trim().toUpperCase()) ?? []) as never,
       quantidade_desejada: Number(s('quantidade') ?? 100),
     });
-    const b = await boss(ctx.config.databaseUrl);
-    await b.send(FILA_PLANEJAR, { busca_id: busca.id }, { retryLimit: 3, retryBackoff: true });
-    log(`busca ${busca.id} criada e enviada ao planejamento (o worker precisa estar rodando)`);
-    await b.stop({ graceful: true });
+    log(`busca ${busca.id} criada; o worker começa em até 20 s (acompanhe no painel)`);
     await ctx.sql.end();
     return;
   }
@@ -97,24 +95,9 @@ async function main() {
   if (comando === 'reprocessar') {
     const buscaId = s('busca');
     if (!buscaId) throw new Error('--busca <id> obrigatório');
-    const linhas = await ctx.sql<{ cnpj: string; uf: string; cnae_principal: string }[]>`
-      select e.cnpj, r.uf, r.cnae_principal from busca_resultado br
-        join empresa e on e.id = br.empresa_id
-        join receita.estabelecimento r on r.cnpj = e.cnpj
-       where br.busca_id = ${buscaId}`;
-    await ctx.sql`insert into motor.busca_progresso (busca_id, total) values (${buscaId}, ${linhas.length})
-                  on conflict (busca_id) do update set total = excluded.total, processadas = 0, falhas = 0, atualizado_em = now()`;
-    await ctx.central.atualizarBusca(buscaId, { status: 'executando', concluidas: 0 });
-    const b = await boss(ctx.config.databaseUrl);
-    const rodada = Date.now();
-    for (const l of linhas) {
-      const seg = segmentoPorCnae(l.cnae_principal);
-      if (!seg) continue;
-      await b.send(FILA_VERIFICAR, { busca_id: buscaId, cnpj: l.cnpj, uf: l.uf, segmento: seg.id },
-        { retryLimit: 5, retryBackoff: true, retryDelay: 30, singletonKey: `${buscaId}:${l.cnpj}:${rodada}` });
-    }
-    log(`${linhas.length} empresas da busca ${buscaId} reenviadas para verificação (busca web usa o cache)`);
-    await b.stop({ graceful: true });
+    const r = await fetch(`${ctx.config.centralUrl}/v1/buscas/${buscaId}/reprocessar`, {
+      method: 'POST', headers: { authorization: `Bearer ${ctx.config.centralApiKey}` } });
+    log(r.ok ? `busca ${buscaId} marcada para reprocessar; o worker começa em até 20 s` : `Central respondeu HTTP ${r.status}: ${await r.text()}`);
     await ctx.sql.end();
     return;
   }
@@ -141,6 +124,34 @@ async function main() {
     for (let i = 0; i < ctx.config.concorrencia; i++) {
       await b.work<JobVerificar>(FILA_VERIFICAR, { batchSize: 1, includeMetadata: true }, verificar);
     }
+    // Busca nova ou pedido de reprocessamento feitos pelo painel: o worker verifica a cada 20 s
+    let ocupado = false;
+    const verificarPendentes = async () => {
+      if (ocupado) return;
+      ocupado = true;
+      try {
+        for (const busca of await ctx.central.listarBuscas(['planejada', 'reprocessar'])) {
+          if (busca.status === 'planejada') {
+            await b.send(FILA_PLANEJAR, { busca_id: busca.id }, { retryLimit: 3, retryBackoff: true, singletonKey: `planejar:${busca.id}` });
+            await ctx.central.atualizarBusca(busca.id, { status: 'executando' });
+          } else {
+            const rodada = Date.now();
+            for (const j of await prepararReprocesso(ctx, busca.id)) {
+              await b.send(FILA_VERIFICAR, j, { retryLimit: 5, retryBackoff: true, retryDelay: 30, singletonKey: `${j.busca_id}:${j.cnpj}:${rodada}` });
+            }
+          }
+        }
+      } catch (e) {
+        log(`aguardando a Central (${(e as Error).message})`);
+      } finally { ocupado = false; }
+    };
+    const sinalDeVida = async () => {
+      try { await ctx.central.reportarStatus('motor-prospecting', await metricasMotor(ctx)); } catch { /* Central ainda subindo */ }
+    };
+    setInterval(verificarPendentes, 20_000);
+    setInterval(sinalDeVida, 30_000);
+    setTimeout(() => { void verificarPendentes(); void sinalDeVida(); }, 3_000);
+
     await b.schedule(FILA_CLAUDE, '*/15 * * * *');
     await b.work(FILA_CLAUDE, async () => {
       const n = await consumirFilaClaude(ctx);

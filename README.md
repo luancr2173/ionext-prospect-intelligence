@@ -51,16 +51,33 @@ TEST_DATABASE_URL=postgres://postgres@localhost:54329/postgres pnpm test
 
 Nunca aponte `TEST_DATABASE_URL` para o Supabase de produção.
 
-## Rodando no Windows (sem Docker)
+## Como usar (Windows)
 
+Primeira vez:
 ```powershell
 cd $HOME\Desktop\ionext\ionext-prospect-intelligence
 git pull
-pnpm install
-powershell -ExecutionPolicy Bypass -File .\configurar.ps1   # uma vez: cria o .env (pergunta uma coisa por vez)
-powershell -ExecutionPolicy Bypass -File .\iniciar.ps1      # abre as janelas da Central e do Motor 01
+powershell -ExecutionPolicy Bypass -File .\configurar.ps1   # cria o .env (banco, Tavily, senha do painel)
 ```
-A Central e o Motor leem o `.env` da raiz automaticamente.
+
+Todo dia:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\iniciar.ps1      # sobe Central + Motor 01 e abre o painel
+```
+
+O painel abre em **http://localhost:3333** (prints com dados fictícios em `docs/painel-*.png`). Por ele você:
+- cria buscas (segmento, bairros, quantidade) e acompanha o progresso;
+- reprocessa uma busca depois de uma melhoria nas regras (a busca web usa o cache);
+- filtra empresas por presença digital, prioridade e status;
+- abre a ficha com verificações V1–V6, Lead Score explicado, contatos, fontes e evidências;
+- registra verificação manual (perfil do Google, avaliações, link na bio, site encontrado);
+- aprova para o Neo, descarta ou registra "não contatar" (LGPD).
+
+O topo mostra se o Motor 01 está rodando, a cota gratuita usada no mês e a fila do Claude.
+Para parar tudo: `Ctrl+C` na janela do `iniciar.ps1`.
+
+A Central escuta só em `127.0.0.1` (o painel fica restrito ao seu computador). Num servidor, defina `HOST=0.0.0.0`,
+coloque HTTPS na frente e `COOKIE_SEGURO=1`.
 
 ## Motor 01 — como rodar a primeira busca
 
@@ -70,8 +87,8 @@ A Central e o Motor leem o `.env` da raiz automaticamente.
    ```bash
    pnpm --filter @ionext/motor-prospecting cli carregar-receita --dir ./dados-receita --referencia 2026-10 --uf DF --municipio BRASILIA
    ```
-3. **Suba a Central e o worker** (`docker compose up -d --build`, ou `pnpm central:dev` + `pnpm --filter @ionext/motor-prospecting worker`).
-4. **Crie a busca de validação:**
+3. **Suba tudo** com `iniciar.ps1` (ou `pnpm start`, ou `docker compose up -d --build`).
+4. **Crie a busca** pelo painel, ou pela linha de comando:
    ```bash
    pnpm --filter @ionext/motor-prospecting cli buscar --segmento clinica_odontologica --uf DF --cidade Brasilia \
      --bairros "Asa Norte,Taguatinga,Aguas Claras" --quantidade 300
@@ -96,17 +113,22 @@ Contatos de MEI vindos da Receita entram com `publico_comercial = false` (podem 
 
 ## API (v1)
 
-Todas as rotas, exceto `/health`, exigem `Authorization: Bearer <segredo>` (veja `CENTRAL_API_KEYS`).
+Todas as rotas `/v1`, exceto `/health`, exigem `Authorization: Bearer <segredo>` (veja `CENTRAL_API_KEYS`) ou a sessão do painel (cookie httpOnly; escritas exigem também o cabeçalho `x-painel: 1`).
 
 | Método | Rota | Uso |
 |---|---|---|
 | POST | `/v1/buscas` | registra uma busca (UF, cidade, bairros, segmento, CNAEs, porte, quantidade) |
+| GET | `/v1/buscas?status=` | lista buscas (o Motor 01 lê as `planejada`/`reprocessar` a cada 20 s) |
 | GET | `/v1/buscas/:id` | status da busca e nº de empresas |
+| POST | `/v1/buscas/:id/reprocessar` | pede ao Motor 01 para verificar de novo |
 | PATCH | `/v1/buscas/:id` | o Motor 01 informa andamento (status, total, concluídas) |
 | POST | `/v1/ingest/candidatas` | Motor 01 entrega candidatas com evidências; a Central deduplica, classifica e pontua |
 | GET | `/v1/empresas` | lista com filtros (`uf`, `cidade`, `bairro`, `segmento`, `classificacao`, `prioridade`, `status`), ordenada por score |
 | GET | `/v1/empresas/:id` | ficha completa: dados, contatos com fonte, presença, oportunidades, evidências, informações não encontradas |
 | POST | `/v1/empresas/:id/evidencias-manuais` | verificação manual (perfil do Google, avaliações, atividade recente, link na bio, site encontrado) |
+| PATCH | `/v1/oportunidades/:id` | muda o status comercial (aprovar para o Neo, descartar…) |
+| GET | `/v1/painel/resumo` | números da visão geral + estado dos motores |
+| PUT | `/v1/motores/:nome` | sinal de vida e métricas de um motor |
 | POST | `/v1/opt-out` | pedido de oposição ao contato (LGPD): bloqueia e descarta oportunidades abertas |
 
 ## Regras que não se negociam

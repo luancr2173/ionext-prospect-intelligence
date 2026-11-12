@@ -1,6 +1,10 @@
 export interface Config {
   databaseUrl: string;
   port: number;
+  /** 127.0.0.1 por padrão (painel local). Em servidor/Docker use HOST=0.0.0.0 atrás de HTTPS. */
+  host: string;
+  /** Senha do painel web. Sem ela, o painel fica desligado (a API continua funcionando). */
+  painelSenha: string | null;
   /** segredo → nome do cliente (motor-prospecting, neo-n8n, ...) */
   apiKeys: Map<string, string>;
 }
@@ -21,5 +25,7 @@ export function lerConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (apiKeys.size === 0) throw new Error('CENTRAL_API_KEYS vazia: a API não sobe sem autenticação');
 
-  return { databaseUrl, port: Number(env.PORT ?? 3333), apiKeys };
+  const painelSenha = env.PAINEL_SENHA?.trim() || null;
+  if (painelSenha && painelSenha.length < 8) throw new Error('PAINEL_SENHA precisa ter pelo menos 8 caracteres');
+  return { databaseUrl, port: Number(env.PORT ?? 3333), host: env.HOST || '127.0.0.1', apiKeys, painelSenha };
 }

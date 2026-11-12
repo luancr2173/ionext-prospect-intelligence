@@ -6,7 +6,7 @@ import { conectar } from './db.ts';
 carregarEnv();
 const cfg = lerConfig();
 const sql = conectar(cfg.databaseUrl);
-const app = criarApp(sql, cfg.apiKeys);
+const app = criarApp(sql, cfg.apiKeys, { painelSenha: cfg.painelSenha, cookieSeguro: process.env.COOKIE_SEGURO === '1' });
 
 const parar = async () => {
   await app.close();
@@ -16,4 +16,7 @@ const parar = async () => {
 process.on('SIGINT', parar);
 process.on('SIGTERM', parar);
 
-await app.listen({ port: cfg.port, host: '0.0.0.0' });
+await app.listen({ port: cfg.port, host: cfg.host });
+console.log(cfg.painelSenha
+  ? `\n  Painel: http://localhost:${cfg.port}\n`
+  : '\n  Painel desligado: defina PAINEL_SENHA no .env\n');

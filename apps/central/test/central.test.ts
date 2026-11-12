@@ -49,12 +49,12 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
 
   beforeAll(async () => {
     sql = conectar(URL!);
-    app = criarApp(sql, new Map([[SEGREDO, 'teste']]), { logger: false });
+    app = criarApp(sql, new Map([[SEGREDO, 'teste']]), { logger: false, painelSenha: 'senha-do-painel' });
     await app.ready();
   });
   afterAll(async () => { await app.close(); await sql.end(); });
   beforeEach(async () => {
-    await sql`truncate empresa, evidencia, busca, opt_out, segmento_prioritario cascade`;
+    await sql`truncate empresa, evidencia, busca, opt_out, segmento_prioritario, motor_status cascade`;
   });
 
   it('exige chave de API', async () => {
@@ -175,5 +175,55 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
 
     const lista = (await app.inject({ method: 'GET', url: '/v1/empresas?uf=DF&classificacao=SITE_EXISTENTE', headers: AUTH })).json();
     expect(lista.total).toBe(1);
+  });
+
+  // ------------------------------------------------------------------ painel
+  it('painel: serve a página, exige senha e usa cookie de sessão', async () => {
+    const pagina = await app.inject({ method: 'GET', url: '/' });
+    expect(pagina.statusCode).toBe(200);
+    expect(pagina.headers['content-security-policy']).toContain("default-src 'self'");
+    expect((await app.inject({ method: 'GET', url: '/painel/..%2Fsrc%2Fconfig.ts' })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: '/painel/../src/config.ts' })).statusCode).not.toBe(200);
+
+    expect((await app.inject({ method: 'POST', url: '/painel/login', payload: { senha: 'errada' } })).statusCode).toBe(401);
+    const login = await app.inject({ method: 'POST', url: '/painel/login', payload: { senha: 'senha-do-painel' } });
+    expect(login.statusCode).toBe(200);
+    const cookie = String(login.headers['set-cookie']).split(';')[0]!;
+    expect(String(login.headers['set-cookie'])).toContain('HttpOnly');
+
+    // leitura com cookie funciona; escrita com cookie exige x-painel (CSRF)
+    expect((await app.inject({ method: 'GET', url: '/v1/painel/resumo', headers: { cookie } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/v1/buscas', headers: { cookie }, payload: { uf: 'DF', cidade: 'Brasília', segmento: 'academia' } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url: '/v1/buscas', headers: { cookie, 'x-painel': '1' }, payload: { uf: 'DF', cidade: 'Brasília', segmento: 'academia' } })).statusCode).toBe(201);
+    expect((await app.inject({ method: 'GET', url: '/v1/painel/resumo', headers: { cookie: 'pi_sessao=1.forjado' } })).statusCode).toBe(401);
+  });
+
+  it('painel: resumo, reprocessar busca, aprovar oportunidade e sinal de vida do motor', async () => {
+    const [b] = await sql`insert into busca (filtros, status) values ('{"segmento":"clinica_odontologica"}', 'concluida') returning id`;
+    const ing = await ingest([candidata()], b!.id);
+    const empresaId = ing.json().resultados[0].empresa_id;
+
+    const resumo = (await app.inject({ method: 'GET', url: '/v1/painel/resumo', headers: AUTH })).json();
+    expect(resumo.totais).toMatchObject({ empresas: 1, oportunidades: 1, aguardando_revisao: 1 });
+    expect(resumo.classificacoes).toEqual([{ classificacao: 'SOMENTE_REDES', total: 1 }]);
+
+    const rep = await app.inject({ method: 'POST', url: `/v1/buscas/${b!.id}/reprocessar`, headers: AUTH });
+    expect(rep.json().status).toBe('reprocessar');
+    expect((await app.inject({ method: 'POST', url: `/v1/buscas/${b!.id}/reprocessar`, headers: AUTH })).statusCode).toBe(409);
+    const pendentes = (await app.inject({ method: 'GET', url: '/v1/buscas?status=planejada,reprocessar', headers: AUTH })).json();
+    expect(pendentes.map((x: { id: string }) => x.id)).toEqual([b!.id]);
+
+    const lista = (await app.inject({ method: 'GET', url: `/v1/empresas?busca=${b!.id}&q=sorriso`, headers: AUTH })).json();
+    expect(lista.total).toBe(1);
+    const opId = lista.itens[0].oportunidade_id;
+    const ap = await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${opId}`, headers: AUTH, payload: { status: 'aprovada_para_contato', observacao: 'ok para abordar' } });
+    expect(ap.json().status).toBe('aprovada_para_contato');
+    const ficha = (await app.inject({ method: 'GET', url: `/v1/empresas/${empresaId}`, headers: AUTH })).json();
+    expect(ficha.oportunidades[0].interacoes[0].resumo).toBe('ok para abordar');
+
+    await app.inject({ method: 'PUT', url: '/v1/motores/motor-prospecting', headers: AUTH, payload: { versao: 'prospecting@0.1.0', busca_web: [] } });
+    const r2 = (await app.inject({ method: 'GET', url: '/v1/painel/resumo', headers: AUTH })).json();
+    expect(r2.motores[0]).toMatchObject({ nome: 'motor-prospecting', dados: { versao: 'prospecting@0.1.0' } });
+    expect(r2.motores[0].segundos_atras).toBeLessThan(5);
   });
 });

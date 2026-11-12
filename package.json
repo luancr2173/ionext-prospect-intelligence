@@ -3,15 +3,19 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.28.0",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p apps/central && tsc -p apps/motor-prospecting && tsc -p packages/dominio && tsc -p packages/contratos",
-    "central:dev": "pnpm --filter @ionext/central dev"
+    "central:dev": "pnpm --filter @ionext/central dev",
+    "start": "concurrently --kill-others-on-fail -n central,motor -c blue,magenta \"pnpm --filter @ionext/central start\" \"pnpm --filter @ionext/motor-prospecting worker\""
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "concurrently": "^9.1.0"
   }
 }

@@ -1,5 +1,5 @@
 import { normalizarNome, segmentoPorCnae, segmentoPorId } from '@ionext/dominio';
-import type { ConfigMotor } from '../config.ts';
+import { VERSAO_MOTOR, type ConfigMotor } from '../config.ts';
 import type { Sql } from '../db.ts';
 import type { Rede } from '../http.ts';
 import type { ProvedorBusca, ResultadoClaude } from '../verificadores/buscaWeb.ts';
@@ -128,4 +128,36 @@ export async function consumirFilaClaude(ctx: Contexto, limite = 50): Promise<nu
   await ctx.sql`update motor.fila_busca_web set status = 'pendente', pego_em = null
                  where status = 'em_andamento' and pego_em < now() - interval '6 hours'`;
   return n;
+}
+
+/** Empresas de uma busca já feita, para verificar de novo com as regras atuais (a busca web usa o cache). */
+export async function prepararReprocesso(ctx: Contexto, buscaId: string): Promise<JobVerificar[]> {
+  const linhas = await ctx.sql<{ cnpj: string; uf: string; cnae_principal: string }[]>`
+    select e.cnpj, r.uf, r.cnae_principal from busca_resultado br
+      join empresa e on e.id = br.empresa_id
+      join receita.estabelecimento r on r.cnpj = e.cnpj
+     where br.busca_id = ${buscaId}`;
+  const jobs = linhas.flatMap((l) => {
+    const seg = segmentoPorCnae(l.cnae_principal);
+    return seg ? [{ busca_id: buscaId, cnpj: l.cnpj, uf: l.uf, segmento: seg.id }] : [];
+  });
+  await ctx.sql`insert into motor.busca_progresso (busca_id, total) values (${buscaId}, ${jobs.length})
+                on conflict (busca_id) do update set total = excluded.total, processadas = 0, falhas = 0, atualizado_em = now()`;
+  await ctx.central.atualizarBusca(buscaId, { status: jobs.length ? 'executando' : 'concluida', concluidas: 0 });
+  ctx.log(`busca ${buscaId}: ${jobs.length} empresas enviadas para reprocessar`);
+  return jobs;
+}
+
+/** Métricas que o painel mostra: cota da busca web no mês, fila do Claude, base carregada. */
+export async function metricasMotor(ctx: Contexto) {
+  const [base] = await ctx.sql`select count(*)::int as estabelecimentos, max(referencia) as referencia from receita.estabelecimento`;
+  const cota = await ctx.sql`select provedor, consultas from motor.uso_busca_web where mes = to_char(now(), 'YYYY-MM')`;
+  const fila = await ctx.sql`select status, count(*)::int as total from motor.fila_busca_web group by status`;
+  return {
+    versao: VERSAO_MOTOR,
+    base_receita: base,
+    busca_web: ctx.provedores.map((p) => ({ provedor: p.nome, limite: p.limiteMensal, usadas: cota.find((c) => c.provedor === p.nome)?.consultas ?? 0 })),
+    fila_claude: Object.fromEntries(fila.map((f) => [f.status, f.total])),
+    concorrencia: ctx.config.concorrencia,
+  };
 }
