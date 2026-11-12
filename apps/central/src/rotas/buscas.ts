@@ -23,6 +23,25 @@ export function rotasBuscas(app: FastifyInstance, sql: Sql) {
     return reply.code(201).send(b);
   });
 
+  /** O Motor 01 informa o andamento da busca. */
+  app.patch('/buscas/:id', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const p = z.object({
+      status: z.enum(['planejada', 'executando', 'concluida', 'falhou', 'cancelada']).optional(),
+      total_celulas: z.number().int().min(0).optional(),
+      concluidas: z.number().int().min(0).optional(),
+    }).parse(req.body);
+    const [b] = await sql`
+      update busca set
+        status = coalesce(${p.status ?? null}, status),
+        total_celulas = coalesce(${p.total_celulas ?? null}::int, total_celulas),
+        concluidas = coalesce(${p.concluidas ?? null}::int, concluidas),
+        concluida_em = case when ${p.status ?? null} = 'concluida' then now() else concluida_em end
+      where id = ${id} returning id, status, total_celulas, concluidas`;
+    if (!b) return reply.code(404).send({ erro: 'busca não encontrada' });
+    return b;
+  });
+
   app.get('/buscas/:id', async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const [b] = await sql`

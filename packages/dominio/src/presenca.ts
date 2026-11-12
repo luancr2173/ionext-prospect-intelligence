@@ -10,6 +10,7 @@ export type ResultadoVerificacao =
   | { status: 'nao_executado' }
   | { status: 'nao_aplicavel' }            // ex.: V3 sem e-mail com domínio próprio
   | { status: 'erro'; detalhe: string }    // timeout, cota, falha de rede
+  | { status: 'inconclusivo'; url: string; detalhe: string } // site achado, titularidade não confirmada
   | { status: 'nada_encontrado' }
   | { status: 'site_encontrado'; url: string; acessivel: boolean };
 
@@ -60,7 +61,19 @@ export function classificarPresenca(v: Verificacoes): ResultadoClassificacao {
     };
   }
 
-  // 2. Sem site encontrado: todas as obrigatórias precisam ter rodado de verdade.
+  // 2. Site candidato sem titularidade confirmada (em qualquer verificação) → revisão, nunca SEM_SITE.
+  const inconclusivas = todas.filter((k) => v[k].status === 'inconclusivo');
+  if (inconclusivas.length > 0) {
+    const r = v[inconclusivas[0]!] as Extract<ResultadoVerificacao, { status: 'inconclusivo' }>;
+    return {
+      classificacao: 'PENDENTE',
+      confiabilidade: 'baixa',
+      url_site: null,
+      motivos: [`${inconclusivas.join(', ')}: site candidato ${r.url} sem titularidade confirmada (${r.detalhe})`],
+    };
+  }
+
+  // 3. Sem site encontrado: todas as obrigatórias precisam ter rodado de verdade.
   const pendentes = OBRIGATORIAS.filter((k) => v[k].status === 'nao_executado' || v[k].status === 'erro');
   if (pendentes.length > 0 || v.V6.status === 'nao_executado') {
     const faltando = [...pendentes, ...(v.V6.status === 'nao_executado' ? ['V6'] : [])];

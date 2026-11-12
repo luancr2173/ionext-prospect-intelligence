@@ -3,6 +3,7 @@ import {
   classificarPresenca, cnpjValido, dominioProprioDoEmail, limparCnpj,
   normalizarCep, normalizarEmail, normalizarNome, normalizarTelefone, type Verificacoes,
 } from '@ionext/dominio';
+import { createHash } from 'node:crypto';
 import type { Sql, Tx } from '../db.ts';
 import { encontrarDuplicata } from './dedup.ts';
 import { recalcularOportunidade } from './oportunidade.ts';
@@ -28,6 +29,12 @@ function normalizarContatos(c: EmpresaCandidata, avisos: string[]): ContatoNorma
     out.push({ ...ct, valor_normalizado: n });
   }
   return out;
+}
+
+/** Hash do conteúdo, sem carimbos de data (uma retentativa do mesmo job gera o mesmo hash). */
+function hashConteudo(c: EmpresaCandidata): string {
+  const semDatas = { ...c, verificado_em: null, evidencias: c.evidencias.map((e) => ({ ...e, coletado_em: null, expira_em: null })) };
+  return createHash('sha256').update(JSON.stringify(semDatas)).digest('hex');
 }
 
 /** Chave estável da candidata dentro de uma busca (idempotência). */
@@ -68,10 +75,11 @@ async function ingerirUma(tx: Tx, c: EmpresaCandidata, buscaId: string | null, m
   }
 
   const chave = chaveCandidata(c, cnpj);
+  const hash = hashConteudo(c);
   if (buscaId) {
-    const [ja] = await tx<{ empresa_id: string; acao: Resultado['acao'] }[]>`
-      select empresa_id, acao from busca_resultado where busca_id = ${buscaId} and chave = ${chave}`;
-    if (ja) {
+    const [ja] = await tx<{ empresa_id: string; acao: Resultado['acao']; hash: string | null }[]>`
+      select empresa_id, acao, hash from busca_resultado where busca_id = ${buscaId} and chave = ${chave}`;
+    if (ja && ja.hash === hash) {
       const r = await recalcularOportunidade(tx, ja.empresa_id);
       return { indice, empresa_id: ja.empresa_id, acao: ja.acao, classificacao: r.classificacao,
                lead_score: r.score?.lead_score ?? null, avisos: [...avisos, 'já ingerida nesta busca'] };
@@ -176,8 +184,9 @@ async function ingerirUma(tx: Tx, c: EmpresaCandidata, buscaId: string | null, m
   const r = await recalcularOportunidade(tx, empresaId);
 
   if (buscaId) {
-    await tx`insert into busca_resultado (busca_id, chave, empresa_id, acao)
-             values (${buscaId}, ${chave}, ${empresaId}, ${acao})`;
+    await tx`insert into busca_resultado (busca_id, chave, empresa_id, acao, hash)
+             values (${buscaId}, ${chave}, ${empresaId}, ${acao}, ${hash})
+             on conflict (busca_id, chave) do update set hash = excluded.hash`;
   }
 
   return { indice, empresa_id: empresaId, acao, classificacao: r.classificacao, lead_score: r.score?.lead_score ?? null, avisos };

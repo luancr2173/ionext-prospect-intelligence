@@ -1,0 +1,20 @@
+# Sobe a Central e o worker do Motor 01 numa VPS (ex.: a mesma do n8n).
+#   cp .env.example .env   # preencha
+#   docker compose up -d --build
+#   docker compose run --rm motor pnpm --filter @ionext/motor-prospecting cli status
+services:
+  central:
+    build: .
+    env_file: .env
+    command: ["pnpm", "--filter", "@ionext/central", "start"]
+    ports: ["127.0.0.1:3333:3333"]
+    restart: unless-stopped
+
+  motor:
+    build: .
+    env_file: .env
+    command: ["pnpm", "--filter", "@ionext/motor-prospecting", "worker"]
+    volumes:
+      - ./dados-receita:/app/dados-receita:ro
+    depends_on: [central]
+    restart: unless-stopped

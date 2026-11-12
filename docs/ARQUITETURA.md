@@ -1,6 +1,6 @@
 # IONEXT Prospect Intelligence — Arquitetura v0.2
 
-> Status: aprovada para a Fase 0 · 12/11/2026
+> Status: Fase 0 e Fase 1 implementadas · 12/11/2026
 > Decisões: TypeScript em tudo · Supabase em projeto próprio (`ionext-prospect-intelligence`, sa-east-1) · repositório novo no GitHub · **sem Google Places API paga** · o CRM anterior foi cancelado, então a Central também faz o funil comercial e a exportação
 > Escopo: Motor 01 (Prospecting), Motor 02 (Website Audit), Central de Oportunidades, integração com o Neo.
 
@@ -60,8 +60,8 @@ Tudo abaixo é gratuito. Cada fonte é um **adaptador plugável**: se amanhã en
 | **Dados abertos CNPJ (Receita Federal)** — fonte principal de descoberta | Descoberta por CNAE + município + bairro; razão social, CNPJ, data de abertura, situação cadastral, porte (MEI/ME/EPP), telefone e e-mail declarados | Arquivos mensais grandes → ETL carrega só as UFs e os CNAEs de interesse em `receita_estabelecimento`. **CNPJ alfanumérico**: emissão começou em 31/07/2026, mantém 14 caracteres → `cnpj` é `text` validado por regex, nunca numérico. Telefone/e-mail de MEI podem ser dado pessoal (LGPD). |
 | **OpenStreetMap (Overpass API)** | Confirmação de endereço/geo, tags `website`, `contact:*`, `opening_hours` | Cobertura irregular no Brasil; serve como sinal, nunca como prova de ausência |
 | **Foursquare OS Places** (dataset aberto, Apache 2.0) | Casamento de POIs com site/telefone; sinal extra para V2 | Download em lote filtrado por Brasil; atualização periódica; cobertura a validar na Fase 3 |
-| **RDAP (registro.br) / DNS / HTTP** | Verificar domínios candidatos (`nomefantasia.com.br`, domínio do e-mail declarado): registrado? resolve? responde? | Gratuito; rate-limit educado, cache por domínio |
-| **Busca web (opcional, plugável)** | V5: procurar site próprio não listado em outra fonte | Sem fornecedor gratuito estável hoje: o Brave encerrou o plano grátis em 2026 e passou a dar US$ 5/mês de crédito (cerca de 1.000 buscas, exige cartão). Padrão: **desligado** → V5 fica "não executado" e reduz a confiabilidade da ficha para "média". |
+| **DNS / HTTP** | Verificar domínios candidatos (`nomefantasia.com.br`, domínio do e-mail declarado): resolve? responde? é da empresa? | Gratuito; sem RDAP (domínio registrado sem DNS não é site) |
+| **Busca web (gratuita, em cadeia)** | V5: procurar site próprio e redes não listados em outra fonte | Tavily (1.000 créditos/mês, sem cartão) → Exa (crédito mensal grátis, sem cartão) → fila da varredura pelo Claude. Uso contado em `motor.uso_busca_web` para nunca passar da cota grátis. Só para leads com score estimado alto/médio. |
 | **Verificação manual no painel** | Operador abre o Google Maps/Instagram no navegador e registra link do perfil, nota, nº de avaliações, link na bio | Evidência com `fonte = manual`, operador e data. Substitui as avaliações que viriam do Places sem scraping e sem violar termos. |
 | **PageSpeed Insights API** | Métricas Lighthouse mobile e desktop | Gratuita com chave e cota diária; fallback: Lighthouse local no worker |
 
@@ -103,8 +103,8 @@ Nenhuma empresa vira `SEM_SITE` só porque o Google Maps não mostra site. Para 
 | V1 | site informado em verificação manual (perfil do Google visto pelo operador) ou no FSQ OS Places | link do perfil / id FSQ |
 | V2 | tag `website` no OSM | id do elemento |
 | V3 | e-mail com domínio próprio na Receita (ex.: `@clinicax.com.br`) → testar o domínio | domínio + resultado HTTP |
-| V4 | domínios candidatos gerados do nome fantasia (`.com.br`, `.com`) → RDAP + DNS + HTTP | lista testada + resultado |
-| V5 | busca web `"nome fantasia" + cidade` → filtrar diretórios/redes → validar se algum resultado é o site da empresa (nome/telefone/endereço batem) | consultas + URLs avaliadas |
+| V4 | domínios candidatos gerados do nome fantasia (`.com.br`, `.com`) → DNS + HTTP + prova de titularidade (CNPJ, telefone ou nome + local na página). Só o nome bate → `inconclusivo` | lista testada + resultado |
+| V5 | busca web `"nome fantasia" + bairro + cidade` em cadeia: Tavily → Exa (cotas grátis) → fila da varredura pelo Claude (tarefa agendada diária). Diretórios ignorados; cada site passa pela mesma prova de titularidade | provedor, consulta, URLs avaliadas |
 | V6 | links encontrados apontam só para redes/WhatsApp/linktree? | URLs |
 
 Passos obrigatórios: **V2, V3 (quando houver e-mail), V4 e V6**. V1 e V5 são opcionais e elevam a confiabilidade.
@@ -114,6 +114,7 @@ Regras de saída:
 - Nada encontrado nos passos executados, mas há Instagram/Facebook/WhatsApp → `SOMENTE_REDES`
 - Nada encontrado nos passos executados e nenhuma rede → `SEM_SITE`
 - Algum passo obrigatório falhou (timeout, cota, erro) ou não executou → `PENDENTE` (reprocessa depois)
+- Algum site candidato sem titularidade confirmada (`inconclusivo`) → `PENDENTE` (revisão manual)
 - Confiabilidade: **alta** se V1 e V5 também rodaram; **média** se só os obrigatórios rodaram
 - Domínio registrado mas fora do ar → `PRESENCA_FRACA` com evidência "domínio sem resposta"
 

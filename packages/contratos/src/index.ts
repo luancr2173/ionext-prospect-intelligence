@@ -24,6 +24,7 @@ export const ResultadoVerificacao = z.discriminatedUnion('status', [
   z.object({ status: z.literal('nao_executado') }),
   z.object({ status: z.literal('nao_aplicavel') }),
   z.object({ status: z.literal('erro'), detalhe: z.string() }),
+  z.object({ status: z.literal('inconclusivo'), url: z.string().url(), detalhe: z.string() }),
   z.object({ status: z.literal('nada_encontrado') }),
   z.object({ status: z.literal('site_encontrado'), url: z.string().url(), acessivel: z.boolean() }),
 ]);

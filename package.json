@@ -6,7 +6,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p apps/central && tsc -p packages/dominio && tsc -p packages/contratos",
+    "typecheck": "tsc -p apps/central && tsc -p apps/motor-prospecting && tsc -p packages/dominio && tsc -p packages/contratos",
     "central:dev": "pnpm --filter @ionext/central dev"
   },
   "devDependencies": {
