@@ -1,3 +1,4 @@
+// Versão inicial do workflow (referência). A versão viva está no n8n: id AUfS5VcbEAQtkW1m (inclui a conferência de WhatsApp na Evolution).
 import { workflow, node, trigger, sticky, newCredential, ifElse, splitInBatches, nextBatch, languageModel, expr } from '@n8n/workflow-sdk';
 
 const agenda = trigger({

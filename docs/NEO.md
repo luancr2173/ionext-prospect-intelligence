@@ -11,10 +11,14 @@
    - Só celular comercial; telefone fixo não entra.
    - Um envio por oportunidade.
    - Follow-up 3 dias depois, se não houver resposta.
-4. A IA redige a mensagem só com os fatos verificados da ficha.
+4. Antes de redigir, o fluxo confere na Evolution se o celular da empresa tem WhatsApp.
+   - Celulares antigos da Receita (8 dígitos) ganham o 9 na frente, pela regra da Anatel.
+   - Número sem WhatsApp é cancelado e não volta para a fila.
+   - Uma oportunidade que falhou 3 vezes sai da fila.
+5. A IA redige a mensagem só com os fatos verificados da ficha.
    - Um nó de validação recusa a mensagem se ela não citar a IONEXT, não terminar com a frase de opt-out, tiver link, citar preço/porcentagem ou ter tamanho fora do limite.
    - Mensagem recusada não é enviada; fica registrada como falha com o motivo.
-5. O envio sai pela instância `TESTE` da Evolution e é registrado em `neo.envio`.
+6. O envio sai pela instância `TESTE` da Evolution e é registrado em `neo.envio`.
    - Fora do modo teste, a oportunidade passa para "abordada".
    - O histórico aparece na ficha da empresa, no cartão "Neo (WhatsApp)".
 

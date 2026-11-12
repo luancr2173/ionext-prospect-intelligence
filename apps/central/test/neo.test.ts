@@ -95,6 +95,30 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(await reservar()).toHaveLength(0);
   });
 
+  it('celular no formato antigo (8 dígitos) ganha o 9 na frente', async () => {
+    await aprovada('Clínica Antiga', '(61) 8123-4567', 'antiga');
+    const [r] = await reservar();
+    expect(r!.telefone).toBe('+5561981234567');
+  });
+
+  it('número sem WhatsApp não volta para a fila', async () => {
+    await aprovada('Clínica Sem Zap', '61 99876-0009', 'semzap');
+    const [r] = await reservar();
+    const [x] = await sql`select neo.registrar_sem_whatsapp(${r!.envio_id}) as r`;
+    expect(x!.r).toEqual({ ok: true });
+    expect(await reservar()).toHaveLength(0);
+  });
+
+  it('depois de 3 falhas a oportunidade sai da fila', async () => {
+    await aprovada('Clínica Falha', '61 99876-0010', 'falha');
+    for (const _ of [1, 2, 3]) {
+      const [r] = await reservar();
+      expect(r).toBeTruthy();
+      await sql`select neo.registrar_envio(${r!.envio_id}, 'x', false, 'Validação: teste')`;
+    }
+    expect(await reservar()).toHaveLength(0);
+  });
+
   it('fora da janela de horário não reserva nada', async () => {
     await aprovada('Clínica Horário', '61 99876-0003', 'hora');
     await cfg('dias_semana', '');
