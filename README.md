@@ -41,7 +41,9 @@ As regras de domínio rodam sem banco. Os testes de integração precisam de um 
 
 ```bash
 docker run -d --name pi-test -p 54329:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgis/postgis:16-3.4
+psql -h localhost -p 54329 -U postgres -c "drop extension if exists postgis_tiger_geocoder, postgis_topology, fuzzystrmatch, postgis cascade"
 psql -h localhost -p 54329 -U postgres -c "create schema extensions"
+psql -h localhost -p 54329 -U postgres -c "alter database postgres set search_path = public, extensions"
 psql -h localhost -p 54329 -U postgres -f supabase/migrations/20261112000000_central_schema.sql
 TEST_DATABASE_URL=postgres://postgres@localhost:54329/postgres pnpm test
 ```

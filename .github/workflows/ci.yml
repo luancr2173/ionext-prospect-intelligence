@@ -29,6 +29,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Aplicar schema
         run: |
+          # A imagem postgis/postgis instala o PostGIS em public; o Supabase usa o schema extensions.
+          psql -h localhost -U postgres -c "drop extension if exists postgis_tiger_geocoder, postgis_topology, fuzzystrmatch, postgis cascade"
           psql -h localhost -U postgres -c "create schema extensions"
           psql -h localhost -U postgres -c "alter database postgres set search_path = public, extensions"
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261112000000_central_schema.sql
