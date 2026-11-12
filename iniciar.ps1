@@ -1,4 +1,4 @@
-# Abre a Central e o worker do Motor 01 em duas janelas. Rode com:
+﻿# Abre a Central e o worker do Motor 01 em duas janelas. Rode com:
 #   powershell -ExecutionPolicy Bypass -File .\iniciar.ps1
 $ErrorActionPreference = 'Stop'
 $raiz = $PSScriptRoot

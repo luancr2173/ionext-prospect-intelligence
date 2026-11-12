@@ -1,4 +1,4 @@
-# Cria o arquivo .env (uma vez). Rode com:
+﻿# Cria o arquivo .env (uma vez). Rode com:
 #   powershell -ExecutionPolicy Bypass -File .\configurar.ps1
 $ErrorActionPreference = 'Stop'
 $arquivo = Join-Path $PSScriptRoot '.env'
