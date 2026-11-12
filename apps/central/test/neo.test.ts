@@ -165,6 +165,15 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(a!.r.contexto.empresa.nome).toBe('Clínica Teste Resposta');
     const [o] = await sql`select status from oportunidade where id = ${op}`;
     expect(o!.status).toBe('aprovada_para_contato');
+    // o WhatsApp manda o número sem o nono dígito
+    const [b] = await sql`select neo.ao_receber('556199990000@s.whatsapp.net', 'pode explicar?') as r`;
+    expect(b!.r).toMatchObject({ prospeccao: true, teste: true });
+  });
+
+  it('opt-out bloqueia mesmo com o número em formatos diferentes (com e sem o 9)', async () => {
+    await aprovada('Clínica Formato', '(61) 8123-9999', 'formato');
+    await sql`select neo.registrar_opt_out('5561981239999@s.whatsapp.net', 'teste')`;
+    expect(await reservar()).toHaveLength(0);
   });
 
   it('fora da janela de horário não reserva nada', async () => {
