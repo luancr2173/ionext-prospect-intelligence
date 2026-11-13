@@ -7,9 +7,42 @@ import { canalLateral } from './empresas.ts';
 /** Dias numa etapa até a oportunidade ser considerada parada (destaque no funil e na lista "Hoje"). */
 export const PRAZO_ETAPA = { aprovada_para_contato: 3, abordada: 7, respondeu: 1, reuniao: 7, proposta: 10 } as const;
 
+/** "Guara Ii" → "Guara II", "Setor De Industrias" → "Setor de Industrias". */
+export function nomeBairro(nome: string): string {
+  return nome
+    .replace(/\b(?:I|Ii|Iii|Iv|Vi|Vii|Viii|Ix|Xi|Xii|Xiii|Xiv|Xv)\b/g, (r) => r.toUpperCase())
+    .replace(/(?<=\S )(?:De|Da|Do|Das|Dos|E)\b/g, (r) => r.toLowerCase());
+}
+
 /** Rotas usadas pelo painel (e úteis para integrações): resumo, segmentos, buscas, status das oportunidades e dos motores. */
 export function rotasPainel(app: FastifyInstance, sql: Sql) {
   app.get('/segmentos', async () => SEGMENTOS.map((s) => ({ id: s.id, nome: s.nome, cnaes: s.cnaes })));
+
+  /**
+   * Bairros de uma cidade com empresas ativas do segmento na base da Receita (para o seletor da nova busca).
+   * "novas" = ainda não pesquisadas pelo motor (ou pesquisadas há mais de 30 dias).
+   */
+  app.get('/bairros', async (req, reply) => {
+    const q = z.object({ uf: z.string().length(2), cidade: z.string().min(2).max(80), segmento: z.string().optional() }).safeParse(req.query);
+    if (!q.success) return reply.code(400).send({ erro: 'uf e cidade são obrigatórios' });
+    const seg = q.data.segmento ? SEGMENTOS.find((s) => s.id === q.data.segmento) : undefined;
+    const cidade = q.data.cidade.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const linhas = await sql<{ nome: string; total: number; novas: number }[]>`
+      select initcap(lower(mode() within group (order by e.bairro))) as nome,
+             count(*)::int as total,
+             count(*) filter (where p.processado_em is null or p.processado_em < now() - interval '30 days')::int as novas
+        from receita.estabelecimento e
+        left join motor.empresa_processada p on p.cnpj = e.cnpj
+       where e.uf = ${q.data.uf.toUpperCase()}
+         and lower(extensions.unaccent(e.municipio_nome)) = ${cidade}
+         and e.situacao = 'ATIVA'
+         and coalesce(e.bairro_normalizado, '') <> ''
+         ${seg ? sql`and e.cnae_principal = any(${seg.cnaes}::text[])` : sql``}
+       group by e.bairro_normalizado
+       order by total desc, nome
+       limit 400`;
+    return { bairros: linhas.map((l) => ({ ...l, nome: nomeBairro(l.nome) })) };
+  });
 
   app.get('/painel/resumo', async () => {
     const [totais] = await sql`

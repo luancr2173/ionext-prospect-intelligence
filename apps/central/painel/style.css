@@ -434,3 +434,36 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .filtrando .tabela tbody tr:nth-child(n+3) { animation-delay: .04s; }
 .filtrando .tabela tbody tr:nth-child(n+6) { animation-delay: .08s; }
 .filtrando .tabela tbody tr:nth-child(n+10) { animation-delay: .12s; }
+
+/* ---------------------------------------------------------------- seletor de bairros (lista suspensa com vários) */
+.seletor { position: relative; }
+.sel-botao { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; cursor: pointer;
+  background: var(--superficie-2); border: 1px solid var(--linha-forte); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: var(--texto);
+  transition: border-color .2s, box-shadow .2s; }
+.sel-botao:hover { border-color: var(--apagado); }
+.seletor.aberto .sel-botao { border-color: var(--azul); box-shadow: 0 0 0 4px var(--azul-fundo); }
+.sel-resumo.vazio { color: var(--suave); }
+.sel-seta { width: 8px; height: 8px; border-right: 1.5px solid var(--suave); border-bottom: 1.5px solid var(--suave); transform: translateY(-2px) rotate(45deg); transition: transform .3s var(--suave-saida); flex: none; }
+.seletor.aberto .sel-seta { transform: translateY(2px) rotate(-135deg); }
+.sel-painel { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20; background: var(--superficie); border: 1px solid var(--linha-forte);
+  border-radius: 12px; box-shadow: var(--sombra); padding: 8px; animation: sel-abrir .25s var(--suave-saida); }
+@keyframes sel-abrir { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
+.sel-busca { width: 100%; margin-bottom: 6px; }
+.sel-itens { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; }
+.sel-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background-color .15s; }
+.sel-item:hover, .sel-item:focus-visible { background: var(--hover); outline: none; }
+.sel-item.marcado { background: var(--azul-fundo); }
+.sel-item input { accent-color: var(--azul); margin: 0; }
+.sel-nome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sel-conta { font-family: var(--mono); font-size: 11px; color: var(--suave); white-space: nowrap; }
+.sel-conta small { color: var(--apagado); font-size: 10.5px; }
+.sel-vazio { padding: 14px 10px; color: var(--suave); font-size: 13px; }
+.sel-rodape { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-top: 1px solid var(--linha); margin-top: 6px; padding: 8px 6px 2px; font-size: 12px; color: var(--suave); }
+.sel-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sel-chips:empty { display: none; }
+.sel-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 999px; font-size: 12.5px;
+  background: var(--azul-fundo); border: 1px solid var(--azul-borda); animation: entrar .3s var(--suave-saida); }
+.sel-chip button { border: 0; background: none; color: var(--suave); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 5px; border-radius: 50%; }
+.sel-chip button:hover { color: var(--texto); background: var(--hover); }
+.campo .sel-item { color: var(--texto); font-size: 14px; }
+.sel-item input[type=checkbox] { width: 16px; height: 16px; }

@@ -247,7 +247,7 @@ async function telaInicio() {
 
     h('div', { class: 'grade grade-2', style: { marginTop: '16px' } },
       h('div', { class: 'cartao' }, h('h2', {}, 'Buscas'), listaBuscas(buscas)),
-      formNovaBusca()),
+      (formBuscaCache ||= formNovaBusca())),
   );
 }
 
@@ -324,13 +324,103 @@ function listaBuscas(buscas) {
   }));
 }
 
+/**
+ * Seletor de bairros com lista suspensa (vários de uma vez): busca, contagem de empresas do segmento
+ * na base da Receita e quantas ainda não foram pesquisadas. Sem nada marcado = cidade inteira.
+ */
+function seletorBairros({ segmento, cidade, uf }) {
+  let lista = [];
+  const marcados = new Set();
+  let carregando = false;
+  const resumo = h('span', { class: 'sel-resumo' });
+  const botao = h('button', { type: 'button', class: 'sel-botao', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
+    resumo, h('span', { class: 'sel-seta', 'aria-hidden': 'true' }));
+  const busca = h('input', { type: 'search', class: 'sel-busca', placeholder: 'Procurar bairro…', 'aria-label': 'Procurar bairro' });
+  const itens = h('div', { class: 'sel-itens', role: 'listbox', 'aria-multiselectable': 'true' });
+  const rodape = h('div', { class: 'sel-rodape' });
+  const painel = h('div', { class: 'sel-painel', hidden: true }, busca, itens, rodape);
+  const chips = h('div', { class: 'sel-chips' });
+  const raiz = h('div', { class: 'seletor' }, botao, painel);
+
+  const desenharResumo = () => {
+    resumo.textContent = marcados.size === 0 ? 'Cidade inteira' : marcados.size === 1 ? [...marcados][0] : `${marcados.size} bairros selecionados`;
+    resumo.classList.toggle('vazio', marcados.size === 0);
+    chips.replaceChildren(...[...marcados].map((b) => h('span', { class: 'sel-chip' }, b,
+      h('button', { type: 'button', 'aria-label': `Remover ${b}`, onclick: () => { marcados.delete(b); desenharTudo(); } }, '×'))));
+  };
+  const desenharItens = () => {
+    const t = busca.value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const filtrados = lista.filter((b) => !t || b.nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(t));
+    if (carregando) return itens.replaceChildren(h('div', { class: 'sel-vazio' }, 'Carregando bairros…'));
+    if (!filtrados.length) return itens.replaceChildren(h('div', { class: 'sel-vazio' }, lista.length ? 'Nenhum bairro com esse nome.' : 'Nenhum bairro encontrado para essa cidade e segmento.'));
+    itens.replaceChildren(...filtrados.map((b) => {
+      const caixa = h('input', { type: 'checkbox', checked: marcados.has(b.nome), tabindex: '-1' });
+      return h('label', { class: `sel-item${marcados.has(b.nome) ? ' marcado' : ''}`, role: 'option', 'aria-selected': String(marcados.has(b.nome)), tabindex: '0',
+        onkeydown: (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); caixa.click(); } } },
+        caixa, h('span', { class: 'sel-nome' }, b.nome),
+        h('span', { class: 'sel-conta', title: `${b.total} empresas ativas do segmento; ${b.novas} ainda não pesquisadas` },
+          `${b.total}`, b.novas < b.total ? h('small', {}, ` · ${b.novas} novas`) : null));
+    }));
+    itens.querySelectorAll('.sel-item').forEach((el, i) => el.querySelector('input').addEventListener('change', () => {
+      const nome = filtrados[i].nome;
+      marcados.has(nome) ? marcados.delete(nome) : marcados.add(nome);
+      desenharTudo();
+    }));
+  };
+  const desenharRodape = () => {
+    const soma = lista.filter((b) => marcados.has(b.nome)).reduce((n, b) => n + b.novas, 0);
+    rodape.replaceChildren(
+      h('span', {}, marcados.size ? `${soma} empresas ainda não pesquisadas nos bairros marcados` : `${lista.length} bairros com empresas do segmento`),
+      marcados.size ? h('button', { type: 'button', class: 'botao-texto', onclick: () => { marcados.clear(); desenharTudo(); } }, 'Limpar') : null);
+  };
+  function desenharTudo() { desenharResumo(); desenharItens(); desenharRodape(); }
+
+  const abrir = (sim) => {
+    painel.hidden = !sim;
+    botao.setAttribute('aria-expanded', String(sim));
+    raiz.classList.toggle('aberto', sim);
+    if (sim) { busca.value = ''; desenharItens(); requestAnimationFrame(() => busca.focus()); }
+  };
+  botao.addEventListener('click', () => abrir(painel.hidden));
+  busca.addEventListener('input', desenharItens);
+  raiz.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !painel.hidden) { ev.stopPropagation(); abrir(false); botao.focus(); } });
+  document.addEventListener('mousedown', (ev) => { if (!painel.hidden && !raiz.contains(ev.target)) abrir(false); }); // um por formulário (o formulário é reaproveitado)
+
+  let pedido = 0, espera;
+  const carregar = () => {
+    clearTimeout(espera);
+    espera = setTimeout(async () => {
+      const id = ++pedido;
+      const c = cidade.value.trim(), u = uf.value.trim();
+      if (c.length < 2 || u.length !== 2) { lista = []; desenharTudo(); return; }
+      carregando = true; desenharItens();
+      try {
+        const r = await api('GET', `/v1/bairros?${new URLSearchParams({ uf: u, cidade: c, segmento: segmento.value })}`);
+        if (id !== pedido) return;
+        lista = r.bairros;
+      } catch { if (id === pedido) lista = []; }
+      carregando = false;
+      // bairro marcado que não existe na nova lista sai da seleção
+      for (const b of [...marcados]) if (!lista.some((x) => x.nome === b)) marcados.delete(b);
+      desenharTudo();
+    }, 300);
+  };
+  [segmento, cidade, uf].forEach((el) => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', carregar));
+  desenharTudo();
+  carregar();
+  return { raiz, chips, valores: () => [...marcados] };
+}
+
+// O formulário sobrevive à atualização automática da Visão geral (não perde o que foi digitado/marcado).
+let formBuscaCache = null;
+
 function formNovaBusca() {
   const segmento = h('select', {}, SEGMENTOS.map((s) => h('option', { value: s.id }, s.nome)));
   segmento.value = 'clinica_odontologica';
-  const bairros = h('input', { value: 'Asa Norte, Taguatinga, Aguas Claras', placeholder: 'Asa Norte, Taguatinga…' });
   const quantidade = h('input', { type: 'number', min: 1, max: 5000, value: 100 });
   const cidade = h('input', { value: 'Brasília' });
   const uf = h('input', { value: 'DF', maxlength: 2 });
+  const bairros = seletorBairros({ segmento, cidade, uf });
   const botao = h('button', { class: 'botao azul', type: 'submit' }, 'Iniciar busca');
   return h('form', {
     class: 'cartao',
@@ -340,10 +430,11 @@ function formNovaBusca() {
       try {
         await api('POST', '/v1/buscas', {
           segmento: segmento.value, uf: uf.value.trim().toUpperCase(), cidade: cidade.value.trim(),
-          bairros: bairros.value.split(',').map((x) => x.trim()).filter(Boolean),
+          bairros: bairros.valores(),
           quantidade_desejada: Number(quantidade.value),
         });
         aviso('Busca criada. O motor começa em até 20 s.');
+        formBuscaCache = null;
         render();
       } catch (e) { aviso(e.message); } finally { botao.disabled = false; }
     },
@@ -351,7 +442,8 @@ function formNovaBusca() {
     h('h2', {}, 'Nova busca'),
     h('div', { class: 'pilha' },
       h('div', { class: 'campo' }, h('label', {}, 'Segmento'), segmento),
-      h('div', { class: 'campo' }, h('label', {}, 'Bairros'), bairros, h('span', { class: 'ajuda' }, 'Separados por vírgula. Vazio = cidade inteira.')),
+      h('div', { class: 'campo' }, h('label', {}, 'Bairros'), bairros.raiz, bairros.chips,
+        h('span', { class: 'ajuda' }, 'Marque um ou mais. Nenhum marcado = cidade inteira. "Taguatinga" também inclui Taguatinga Norte, Sul e Centro.')),
       h('div', { class: 'grade', style: { gridTemplateColumns: '1fr 2fr 70px' } },
         h('div', { class: 'campo' }, h('label', {}, 'Quantidade'), quantidade),
         h('div', { class: 'campo' }, h('label', {}, 'Cidade'), cidade),
@@ -855,7 +947,10 @@ async function render() {
   try {
     if (caminho === '/') {
       await telaInicio();
-      timerAtualizacao = setInterval(() => { if (!document.hidden) telaInicio().catch(() => {}); }, 10_000);
+      timerAtualizacao = setInterval(() => {
+        const editando = formBuscaCache && (formBuscaCache.contains(document.activeElement) || formBuscaCache.querySelector('.seletor.aberto'));
+        if (!document.hidden && !editando) telaInicio().catch(() => {});
+      }, 10_000);
     } else if (caminho === '/empresas') await telaEmpresas(params);
     else if (caminho === '/funil') await telaFunil(params);
     else if (caminho.startsWith('/empresa/')) await telaEmpresa(caminho.split('/')[2]);

@@ -285,6 +285,23 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(o!.d).toBe(12);
   });
 
+  it('lista bairros da cidade para o seletor da nova busca', async () => {
+    await sql`insert into receita.estabelecimento (cnpj, cnpj_basico, matriz, situacao, cnae_principal, uf, municipio_codigo, municipio_nome, bairro, bairro_normalizado, referencia)
+      values ('99000000000101','99000000',true,'ATIVA','8630504','DF','9701','BRASILIA','GUARA II','guara ii','t'),
+             ('99000000000102','99000000',true,'ATIVA','8630504','DF','9701','BRASILIA','GUARA II','guara ii','t'),
+             ('99000000000103','99000000',true,'ATIVA','8630504','DF','9701','BRASILIA','SETOR DE INDUSTRIAS','setor de industrias','t'),
+             ('99000000000104','99000000',true,'BAIXADA','8630504','DF','9701','BRASILIA','LAGO SUL','lago sul','t'),
+             ('99000000000105','99000000',true,'ATIVA','4520001','DF','9701','BRASILIA','NOROESTE','noroeste','t')
+      on conflict do nothing`;
+    const r = await app.inject({ method: 'GET', url: '/v1/bairros?uf=DF&cidade=Bras%C3%ADlia&segmento=clinica_odontologica', headers: AUTH });
+    const nomes = r.json().bairros.map((b: { nome: string; total: number }) => `${b.nome}:${b.total}`);
+    expect(nomes).toContain('Guara II:2');
+    expect(nomes).toContain('Setor de Industrias:1');
+    expect(nomes.some((n: string) => n.startsWith('Lago Sul') || n.startsWith('Noroeste'))).toBe(false);
+    expect((await app.inject({ method: 'GET', url: '/v1/bairros?uf=DF', headers: AUTH })).statusCode).toBe(400);
+    await sql`delete from receita.estabelecimento where cnpj like '99000000%'`;
+  });
+
   it('serve ícone, fontes e tema do painel', async () => {
     const icone = await app.inject({ method: 'GET', url: '/painel/icone.svg' });
     expect(icone.headers['content-type']).toContain('image/svg+xml');
