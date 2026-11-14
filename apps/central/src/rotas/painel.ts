@@ -84,7 +84,7 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
    */
   app.get('/painel/respostas', async () => {
     const itens = await sql`
-      select o.id, o.status, o.lead_score, e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone,
+      select o.id, o.status, o.lead_score, o.neo_pausado_em, e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone,
              ult.resumo as ultima_mensagem, ult.registrado_em as recebida_em,
              (select count(*)::int from interacao i
                where i.oportunidade_id = o.id and i.direcao = 'entrada'
@@ -95,7 +95,8 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
                        where i.oportunidade_id = o.id and i.direcao = 'entrada'
                        order by i.registrado_em desc limit 1) ult on true
         left join lateral (select max(i.registrado_em) as em from interacao i
-                            where i.oportunidade_id = o.id and i.direcao = 'saida' and i.registrado_por <> 'neo') hum on true
+                            where i.oportunidade_id = o.id and i.direcao = 'saida' and i.registrado_por <> 'neo'
+                              and i.resultado is distinct from 'controle_neo') hum on true
         ${canalLateral(sql)}
        where o.status in ('abordada', 'respondeu', 'reuniao', 'proposta')
          and ult.registrado_em > coalesce(o.respostas_vistas_em, '-infinity')
@@ -137,7 +138,8 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
                                         where i.oportunidade_id = o.id and i.direcao = 'entrada'
                                           and i.registrado_em > coalesce(o.respostas_vistas_em, '-infinity')
                                           and not exists (select 1 from interacao s where s.oportunidade_id = o.id and s.direcao = 'saida'
-                                                             and s.registrado_por <> 'neo' and s.registrado_em > i.registrado_em)))
+                                                             and s.registrado_por <> 'neo' and s.resultado is distinct from 'controle_neo'
+                                                             and s.registrado_em > i.registrado_em)))
                    or (o.status = 'reuniao' and o.reuniao_em is null and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.reuniao}))
                    or (o.status = 'proposta' and o.previsao_fechamento is null and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.proposta}))
                    then 'parada'
@@ -234,6 +236,7 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
       with ops as (
         select o.id, o.status, o.tipo, o.lead_score, o.prioridade, o.atualizado_em, o.etapa_desde,
                o.reuniao_em, o.proposta_valor::float as proposta_valor, o.previsao_fechamento::text as previsao_fechamento,
+               o.neo_pausado_em,
                floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
                case when o.status in ('nova', 'revisada') then 'revisar' else o.status end as etapa,
                e.id as empresa_id, e.nome_fantasia, e.bairro, e.segmento, ch.canal, ch.telefone,
@@ -273,6 +276,64 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
                                 and status in ('nova', 'revisada', 'aprovada_para_contato', 'descartada')
                               returning id`;
     return { atualizadas: linhas.length };
+  });
+
+  /**
+   * Assumir a conversa: o Neo para de responder e de mandar follow-up para esta empresa.
+   * pausado=false devolve a conversa ao Neo.
+   */
+  app.post('/oportunidades/:id/neo', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { pausado } = z.object({ pausado: z.boolean() }).parse(req.body);
+    const [o] = await sql`update oportunidade
+                             set neo_pausado_em = ${pausado ? sql`now()` : null}, neo_pausado_por = ${pausado ? req.cliente : null}
+                           where id = ${id} returning id, neo_pausado_em, neo_pausado_por`;
+    if (!o) return reply.code(404).send({ erro: 'oportunidade não encontrada' });
+    // resultado 'controle_neo': registro de quem conduz, não conta como "já respondi" na caixa de respostas
+    await sql`insert into interacao (oportunidade_id, canal, direcao, resumo, resultado, registrado_por)
+              values (${id}, 'outro', 'saida', ${pausado ? 'Assumiu a conversa: o Neo parou de responder esta empresa.' : 'Devolveu a conversa ao Neo.'}, 'controle_neo', ${req.cliente})`;
+    return o;
+  });
+
+  /** Opt-outs duvidosos ("agora não", "mais pra frente"): já bloqueados, esperando uma pessoa confirmar ou desfazer. */
+  app.get('/painel/opt-out-revisar', async () => {
+    const itens = await sql`
+      select x.chave, x.valor, x.mensagem, x.registrado_em, o.id as oportunidade_id, o.status, e.id as empresa_id, e.nome_fantasia, e.bairro
+        from opt_out x
+        left join oportunidade o on o.id = x.oportunidade_id
+        left join empresa e on e.id = o.empresa_id
+       where x.revisao = 'pendente'
+       order by x.registrado_em limit 20`;
+    return { itens };
+  });
+
+  /**
+   * manter: confirma o bloqueio. desfazer: era só adiamento — tira o bloqueio e a oportunidade volta para
+   * "Responderam", para uma pessoa decidir o próximo passo (o Neo não retoma sozinho: a conversa fica assumida).
+   */
+  app.post('/opt-out/revisar', async (req, reply) => {
+    const p = z.object({ chave: z.literal('telefone'), valor: z.string().min(8).max(20), decisao: z.enum(['manter', 'desfazer']) }).parse(req.body);
+    const [x] = await sql`select oportunidade_id from opt_out where chave = ${p.chave} and valor = ${p.valor} and revisao = 'pendente'`;
+    if (!x) return reply.code(404).send({ erro: 'opt-out não encontrado ou já revisado' });
+    await sql.begin(async (tx) => {
+      if (p.decisao === 'manter') {
+        await tx`update opt_out set revisao = 'confirmado' where chave = ${p.chave} and valor = ${p.valor}`;
+        if (x.oportunidade_id) {
+          await tx`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por)
+                   values (${x.oportunidade_id}, 'outro', 'saida', 'Opt-out confirmado na revisão.', ${req.cliente})`;
+        }
+        return;
+      }
+      await tx`delete from opt_out where chave = ${p.chave} and valor = ${p.valor}`;
+      if (x.oportunidade_id) {
+        await tx`update oportunidade set status = 'respondeu', responsavel = ${req.cliente},
+                                         neo_pausado_em = now(), neo_pausado_por = ${req.cliente}
+                  where id = ${x.oportunidade_id} and status = 'descartada'`;
+        await tx`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por)
+                 values (${x.oportunidade_id}, 'outro', 'saida', 'Opt-out desfeito na revisão: era só um "agora não". Conversa assumida; o Neo não retoma sozinho.', ${req.cliente})`;
+      }
+    });
+    return { ok: true, decisao: p.decisao };
   });
 
   /** Dados do negócio: reunião, proposta (valor e solução) e previsão de fechamento. null apaga o campo. */

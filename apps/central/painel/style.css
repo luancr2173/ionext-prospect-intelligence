@@ -498,3 +498,15 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .form-negocio input { width: 100%; min-width: 0; }
 @media (max-width: 700px) { .grade-campos { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .resposta { transition: none; } }
+
+/* ---------------------------------------------------------------- CRM: controle da conversa do Neo */
+.tempo li.tempo-neo::before { border-color: var(--azul); background: var(--azul); }
+.controle-neo { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 18px;
+  border: 1px solid var(--azul-borda); background: var(--azul-fundo); border-radius: 12px; font-size: 14px; }
+.controle-neo.pausado { border-color: color-mix(in srgb, var(--ambar) 45%, transparent); background: var(--ambar-fundo); }
+.controle-neo .botao { flex-shrink: 0; }
+.assumida { color: var(--ambar); font-weight: 600; }
+.card-neo.assumida { font-weight: 600; }
+.contador-ambar { color: var(--ambar); background: var(--ambar-fundo); border-color: color-mix(in srgb, var(--ambar) 45%, transparent); }
+.revisar-optout { border-color: color-mix(in srgb, var(--ambar) 45%, var(--linha)); }
+@media (max-width: 700px) { .controle-neo { flex-direction: column; align-items: flex-start; } }

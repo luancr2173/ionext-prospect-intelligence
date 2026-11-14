@@ -220,8 +220,8 @@ function telaLogin() {
 }
 
 async function telaInicio() {
-  const [resumo, buscas, hoje, respostas] = await Promise.all([atualizarMotor(), api('GET', '/v1/buscas?limite=15'),
-    api('GET', '/v1/painel/hoje'), api('GET', '/v1/painel/respostas')]);
+  const [resumo, buscas, hoje, respostas, optouts] = await Promise.all([atualizarMotor(), api('GET', '/v1/buscas?limite=15'),
+    api('GET', '/v1/painel/hoje'), api('GET', '/v1/painel/respostas'), api('GET', '/v1/painel/opt-out-revisar')]);
   if (!resumo) return;
   const t = resumo.totais;
   const total = resumo.classificacoes.reduce((s, c) => s + c.total, 0);
@@ -247,7 +247,7 @@ async function telaInicio() {
       kpi('Aguardando sua revisão', t.aguardando_revisao, t.aprovadas ? `${t.aprovadas} já aprovadas para o Neo` : 'nenhuma aprovada ainda')),
 
     h('div', { class: 'grade grade-2', style: { marginTop: '16px' } },
-      h('div', { class: 'pilha' }, cartaoHoje(hoje, respostas), cartaoRespostas(respostas)),
+      h('div', { class: 'pilha' }, cartaoOptOutRevisar(optouts), cartaoHoje(hoje, respostas), cartaoRespostas(respostas)),
       cartaoConversao(resumo.funil, resumo.valores)),
 
     h('div', { class: 'cartao', style: { marginTop: '16px' } },
@@ -299,6 +299,33 @@ function cartaoHoje(hoje, respostas) {
       itens.length > 8 && h('a', { class: 'coluna-mais', href: '#/funil' }, `+ ${itens.length - 8} no funil`)]);
 }
 
+/** Opt-out duvidoso ("agora não", "mais pra frente"): já bloqueado; uma pessoa confirma ou desfaz. */
+function cartaoOptOutRevisar(r) {
+  const itens = (r && r.itens) || [];
+  if (itens.length === 0) return null;
+  const decidir = (x, decisao) => async (ev) => {
+    ev.preventDefault();
+    try {
+      await api('POST', '/v1/opt-out/revisar', { chave: x.chave, valor: x.valor, decisao });
+      aviso(decisao === 'manter' ? 'Bloqueio confirmado.' : 'Bloqueio desfeito. A conversa ficou com você; o Neo não retoma sozinho.');
+      render();
+    } catch (e) { aviso(e.message); }
+  };
+  return h('div', { class: 'cartao revisar-optout' },
+    h('div', { class: 'titulo-cartao' }, h('h2', {}, 'Revisar ', h('em', {}, 'opt-out')), h('span', { class: 'contador contador-ambar' }, itens.length)),
+    h('p', { class: 'legenda', style: { margin: '-6px 0 10px' } }, 'Pediram para parar, mas pode ser só “agora não”. O número já está bloqueado até você decidir.'),
+    itens.map((x) => h('div', { class: 'resposta' },
+      h('div', { class: 'resposta-topo' },
+        x.empresa_id ? h('a', { class: 'item-titulo', href: `#/empresa/${x.empresa_id}` }, x.nome_fantasia) : h('span', { class: 'item-titulo' }, telFmt(x.valor)),
+        h('span', { class: 'espera' }, relativo(x.registrado_em))),
+      h('div', { class: 'resposta-texto' }, x.mensagem || '—'),
+      h('div', { class: 'resposta-rodape' },
+        h('span', { class: 'item-sub' }, [telFmt(x.valor), x.bairro].filter(Boolean).join(' · ')),
+        h('span', { class: 'resposta-acoes' },
+          h('button', { class: 'botao pequeno', type: 'button', title: 'Tira o bloqueio; a oportunidade volta para “Responderam” com a conversa com você', onclick: decidir(x, 'desfazer') }, 'Era “agora não”'),
+          h('button', { class: 'botao pequeno perigo', type: 'button', onclick: decidir(x, 'manter') }, 'Manter bloqueio'))))));
+}
+
 /**
  * Caixa de respostas: conversas em que a última mensagem é da empresa e ninguém conferiu ainda.
  * Quem espera há mais tempo vem primeiro. "Já vi" tira da caixa até chegar mensagem nova.
@@ -326,7 +353,8 @@ function cartaoRespostas(respostas) {
           h('span', { class: 'espera', title: `Recebida em ${quando(x.recebida_em)}` }, relativo(x.recebida_em))),
         h('div', { class: 'resposta-texto' }, x.ultima_mensagem || '(mensagem sem texto)'),
         h('div', { class: 'resposta-rodape' },
-          h('span', { class: 'item-sub' }, [STATUS[x.status], x.novas > 1 && `${x.novas} mensagens novas`, x.bairro].filter(Boolean).join(' · ')),
+          h('span', { class: 'item-sub' }, x.neo_pausado_em ? h('b', { class: 'assumida' }, 'Com você') : 'Neo respondendo',
+            ' · ', [STATUS[x.status], x.novas > 1 && `${x.novas} mensagens novas`, x.bairro].filter(Boolean).join(' · ')),
           h('span', { class: 'resposta-acoes' }, chipCanal(x.canal, x.telefone),
             h('button', { class: 'botao pequeno', type: 'button', title: 'Tira da caixa até chegar uma mensagem nova', onclick: jaVi(x) }, 'Já vi')))))),
     itens.length > 6 && h('a', { class: 'coluna-mais', href: '#/funil' }, `+ ${itens.length - 6} esperando`));
@@ -717,7 +745,7 @@ async function telaFunil(params) {
       op.etapa === 'reuniao' && op.reuniao_em && h('div', { class: 'card-negocio' }, `Reunião ${diaReuniao(op.reuniao_em)}`),
       ['proposta', 'ganha', 'perdida'].includes(op.etapa) && (op.proposta_valor != null || op.previsao_fechamento) && h('div', { class: 'card-negocio' },
         [op.proposta_valor != null && moeda(op.proposta_valor), op.etapa === 'proposta' && op.previsao_fechamento && `fecha ${dataCurta(op.previsao_fechamento)}`].filter(Boolean).join(' · ')),
-      linhaNeo && h('div', { class: 'card-neo' }, linhaNeo),
+      op.neo_pausado_em ? h('div', { class: 'card-neo assumida' }, 'Conversa com você') : linhaNeo && h('div', { class: 'card-neo' }, linhaNeo),
       h('div', { class: 'dias', title: `Nesta etapa desde ${quando(op.etapa_desde)}` },
         parada(op) ? `Parada · ${op.dias_na_etapa} d` : `Na etapa · ${diasTexto(op.dias_na_etapa)}`),
       op.ultima_interacao && h('div', { class: 'card-neo' }, `Última interação ${relativo(op.ultima_interacao)}`),
@@ -813,6 +841,7 @@ async function telaEmpresa(id) {
         chipCanal(f.neo && f.neo.whatsapp ? 'whatsapp' : (f.contatos.some((c) => c.tipo === 'telefone' || c.tipo === 'whatsapp') ? 'fixo' : (f.contatos.some((c) => c.tipo === 'email') ? 'email' : 'sem_contato')),
           f.neo && f.neo.whatsapp ? f.neo.whatsapp.numero : (f.contatos.find((c) => c.tipo === 'telefone') || {}).valor),
         op && h('span', { class: 'etiqueta e-alta' }, STATUS[op.status] || op.status),
+        op && op.neo_pausado_em && h('span', { class: 'etiqueta e-alerta', title: `Desde ${quando(op.neo_pausado_em)}` }, 'Conversa com você · Neo pausado'),
         op && op.dias_na_etapa != null && h('span', { class: 'dias' }, op.dias_na_etapa < 1 ? 'nesta etapa desde hoje' : `nesta etapa há ${op.dias_na_etapa} d`),
         etiquetaClasse(p && p.classificacao),
         op && etiquetaPrioridade(op.prioridade),
@@ -848,6 +877,7 @@ async function telaEmpresa(id) {
 
       h('div', { class: 'pilha' },
         acoes,
+        controleNeo(f.neo, op),
         op && cartaoNegocio(op),
         linhaDoTempo(f, op),
         cartaoNeo(f.neo),
@@ -870,7 +900,11 @@ function linhaDoTempo(f, op) {
     quando: x.enviado_em, tipo: 'saida', titulo: x.tipo === 'primeira' ? 'Neo enviou a primeira mensagem' : 'Neo enviou o follow-up', texto: x.mensagem }));
   (op ? op.interacoes || [] : []).forEach((i) => {
     if (i.registrado_por === 'neo' && i.direcao === 'saida' && /^(Primeira mensagem|Follow-up):/.test(i.resumo)) return; // já aparece pelo envio
-    eventos.push({ quando: i.registrado_em, tipo: i.direcao, titulo: i.direcao === 'entrada' ? 'Resposta da empresa' : `Anotação · ${i.registrado_por}`, texto: i.resumo });
+    const doNeo = i.registrado_por === 'neo' && i.direcao === 'saida';
+    const respostaNeo = doNeo && i.resumo.startsWith('Neo: ');
+    eventos.push({ quando: i.registrado_em, tipo: respostaNeo ? 'neo' : i.direcao,
+      titulo: i.direcao === 'entrada' ? 'Mensagem da empresa' : respostaNeo ? 'Neo respondeu' : doNeo ? 'Neo' : `Anotação · ${i.registrado_por}`,
+      texto: respostaNeo ? i.resumo.slice(5) : i.resumo });
   });
   (op ? op.etapas || [] : []).forEach((x) => eventos.push({
     quando: x.em, tipo: 'etapa', titulo: `${STATUS[x.de] || x.de} → ${STATUS[x.para] || x.para}${x.por ? ` · ${x.por}` : ''}` }));
@@ -889,6 +923,26 @@ function linhaDoTempo(f, op) {
         h('div', { class: 'tempo-titulo' }, ev.titulo, h('span', { class: 'item-sub' }, quando(ev.quando))),
         ev.texto && h('div', { class: 'tempo-texto' }, ev.texto)))),
     op && h('div', { class: 'anotar' }, registrar, salvar));
+}
+
+/** Quem conduz a conversa: o Neo ou uma pessoa. Aparece depois da primeira mensagem real do Neo. */
+function controleNeo(neo, op) {
+  if (!neo || !op) return null;
+  const conversou = neo.envios.some((x) => !x.teste && x.status === 'enviado');
+  const pausar = (pausado) => async () => {
+    try {
+      await api('POST', `/v1/oportunidades/${op.id}/neo`, { pausado });
+      aviso(pausado ? 'Conversa assumida: o Neo parou de responder esta empresa.' : 'Conversa devolvida ao Neo.');
+      render();
+    } catch (e) { aviso(e.message); }
+  };
+  if (!conversou) return null;
+  return h('div', { class: `controle-neo${op.neo_pausado_em ? ' pausado' : ''}` },
+    op.neo_pausado_em
+      ? [h('div', {}, h('b', {}, 'A conversa está com você.'), h('div', { class: 'item-sub' }, `O Neo não responde nem manda follow-up desde ${quando(op.neo_pausado_em)}. Responda pelo WhatsApp da IONEXT.`)),
+        h('button', { class: 'botao pequeno', type: 'button', onclick: pausar(false) }, 'Devolver ao Neo')]
+      : [h('div', {}, h('b', {}, 'O Neo está conduzindo.'), h('div', { class: 'item-sub' }, 'Assuma quando quiser falar você mesmo: ele para de responder esta empresa.')),
+        h('button', { class: 'botao pequeno azul', type: 'button', onclick: pausar(true) }, 'Assumir conversa')]);
 }
 
 function cartaoNeo(neo) {

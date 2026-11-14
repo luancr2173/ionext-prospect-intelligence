@@ -349,6 +349,49 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(resumo.valores).toEqual({ em_proposta: 0, ganho_mes: 2500 });
   });
 
+  it('CRM: assumir a conversa e revisar opt-out duvidoso', async () => {
+    const zap = candidata({
+      nome_fantasia: 'Clínica Assumida', identificadores: [{ fonte: 'osm', valor: 'node/950' }],
+      contatos: [{ tipo: 'telefone', valor: '(61) 99555-4433', publico_comercial: true, evidencia_ref: 'osm1' }],
+    });
+    await ingest([zap]);
+    const [o] = await sql`select o.id from oportunidade o join empresa e on e.id = o.empresa_id where e.nome_fantasia = 'Clínica Assumida'`;
+    const id = o!.id as string;
+    const pausa = await app.inject({ method: 'POST', url: `/v1/oportunidades/${id}/neo`, headers: AUTH, payload: { pausado: true } });
+    expect(pausa.statusCode).toBe(200);
+    expect(pausa.json().neo_pausado_em).toBeTruthy();
+    // assumir não conta como "já respondi": a mensagem continua na caixa de respostas
+    await sql`update oportunidade set status = 'respondeu' where id = ${id}`;
+    await sql`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por, registrado_em)
+              values (${id}, 'whatsapp', 'entrada', 'Quero falar com uma pessoa', 'neo', now() - interval '1 minute')`;
+    const caixa = (await app.inject({ method: 'GET', url: '/v1/painel/respostas', headers: AUTH })).json();
+    expect(caixa.itens.map((x: { id: string }) => x.id)).toEqual([id]);
+    expect(caixa.itens[0].neo_pausado_em).toBeTruthy();
+    const volta = await app.inject({ method: 'POST', url: `/v1/oportunidades/${id}/neo`, headers: AUTH, payload: { pausado: false } });
+    expect(volta.json().neo_pausado_em).toBeNull();
+    const [n] = await sql`select count(*)::int as n from interacao where oportunidade_id = ${id} and resumo like '%conversa%'`;
+    expect(n!.n).toBe(2);
+
+    // opt-out duvidoso: desfazer devolve para "Responderam" com a conversa assumida
+    await sql`update oportunidade set status = 'descartada' where id = ${id}`;
+    await sql`insert into opt_out (chave, valor, motivo, revisao, mensagem, oportunidade_id)
+              values ('telefone', '+5561995554433', 'pediu pelo WhatsApp', 'pendente', 'agora não, talvez depois', ${id})`;
+    const lista = (await app.inject({ method: 'GET', url: '/v1/painel/opt-out-revisar', headers: AUTH })).json();
+    expect(lista.itens).toHaveLength(1);
+    expect(lista.itens[0]).toMatchObject({ nome_fantasia: 'Clínica Assumida', mensagem: 'agora não, talvez depois' });
+    const des = await app.inject({ method: 'POST', url: '/v1/opt-out/revisar', headers: AUTH,
+      payload: { chave: 'telefone', valor: '+5561995554433', decisao: 'desfazer' } });
+    expect(des.statusCode).toBe(200);
+    const [depois] = await sql`select status, neo_pausado_em from oportunidade where id = ${id}`;
+    expect(depois!.status).toBe('respondeu');
+    expect(depois!.neo_pausado_em).toBeTruthy();
+    const [sem] = await sql`select count(*)::int as n from opt_out where valor = '+5561995554433'`;
+    expect(sem!.n).toBe(0);
+    const de_novo = await app.inject({ method: 'POST', url: '/v1/opt-out/revisar', headers: AUTH,
+      payload: { chave: 'telefone', valor: '+5561995554433', decisao: 'manter' } });
+    expect(de_novo.statusCode).toBe(404);
+  });
+
   it('não deixa criar a mesma busca enquanto outra igual está ativa', async () => {
     const corpo = { uf: 'DF', cidade: 'Taguatinga', segmento: 'clinica_medica', bairros: ['Centro', 'Norte'] };
     const a = await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH, payload: corpo });

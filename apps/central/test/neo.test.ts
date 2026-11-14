@@ -194,6 +194,47 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(c!.r).toEqual({ prospeccao: false });
   });
 
+  it('conversa: respostas do Neo na linha do tempo, pausa ao assumir e opt-out duvidoso em revisão', async () => {
+    await cfg('modo_teste', 'false');
+    const op = await aprovada('Clínica Conversa', '61 99876-0040', 'conversa');
+    const [r] = await reservar();
+    await sql`select neo.registrar_envio(${r!.envio_id}, 'Olá! Aqui é o Neo...', true)`;
+    await sql`select neo.ao_receber('5561998760040@s.whatsapp.net', 'Como funciona?')`;
+
+    // o fluxo de atendimento separa os balões com barra invertida
+    const [g] = await sql`select neo.registrar_resposta_neo('5561998760040@s.whatsapp.net', ${'Claro!\\Funciona assim'}) as r`;
+    expect(g!.r).toEqual({ ok: true });
+    const [i] = await sql`select resumo from interacao where oportunidade_id = ${op} and resumo like 'Neo:%'`;
+    expect(i!.resumo).toBe('Neo: Claro!\nFunciona assim');
+    const [fora] = await sql`select neo.registrar_resposta_neo('5561911112222', 'oi') as r`;
+    expect(fora!.r).toEqual({ ok: false });
+
+    // assumir: o Neo não responde nem manda follow-up
+    expect((await sql`select neo.pode_responder('5561998760040') as p`)[0]!.p).toBe(true);
+    await sql`update oportunidade set neo_pausado_em = now() where id = ${op}`;
+    const [p] = await sql`select neo.ao_receber('5561998760040', 'Alô?') as r`;
+    expect(p!.r).toMatchObject({ prospeccao: true, pausado: true });
+    expect((await sql`select neo.pode_responder('5561998760040') as p`)[0]!.p).toBe(false);
+    expect((await sql`select neo.pode_responder('5561911112222') as p`)[0]!.p).toBe(true); // fora da prospecção
+    await sql`update oportunidade set status = 'abordada' where id = ${op}`;
+    await sql`update neo.envio set enviado_em = now() - interval '5 days' where oportunidade_id = ${op}`;
+    expect(await reservar()).toHaveLength(0); // sem follow-up enquanto pausado
+    await sql`update oportunidade set neo_pausado_em = null where id = ${op}`;
+    expect((await reservar()).map((x) => x.tipo)).toEqual(['followup']);
+
+    // opt-out claro x duvidoso: os dois bloqueiam na hora; só o duvidoso vai para revisão
+    const op2 = await aprovada('Clínica Agora Não', '61 99876-0041', 'agoranao');
+    const [r2] = await reservar();
+    await sql`select neo.registrar_envio(${r2!.envio_id}, 'Olá!', true)`;
+    await sql`select neo.ao_receber('5561998760041', 'No momento não tenho interesse, quem sabe ano que vem')`;
+    const [d] = await sql`select revisao, mensagem, oportunidade_id from opt_out where valor = '+5561998760041'`;
+    expect(d).toMatchObject({ revisao: 'pendente', oportunidade_id: op2 });
+    expect((await sql`select neo.pode_responder('5561998760041') as p`)[0]!.p).toBe(false);
+    await sql`select neo.ao_receber('5561998760040', 'Não quero receber mensagens')`;
+    const [c] = await sql`select revisao from opt_out where valor = '+5561998760040'`;
+    expect(c!.revisao).toBe('confirmado');
+  });
+
   it('ao_receber no modo teste: liga a resposta do número de teste ao último envio de teste', async () => {
     const op = await aprovada('Clínica Teste Resposta', '61 99876-0021', 'tresp');
     const [r] = await reservar();
