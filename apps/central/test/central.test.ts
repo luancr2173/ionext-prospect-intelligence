@@ -452,6 +452,40 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(json.empresas[0]).toMatchObject({ nome_fantasia: '=Clínica Fórmula', telefone_principal: '+5561994443322' });
   });
 
+  it('resultados: abordadas, respostas, reuniões e ganhos por segmento, bairro e mensagem', async () => {
+    const mk = (n: number, bairro: string, seg: string) => candidata({
+      nome_fantasia: `Clínica R${n}`, segmento: seg, identificadores: [{ fonte: 'osm', valor: `node/97${n}` }],
+      endereco: { uf: 'DF', cidade: 'Brasília', bairro, cep: '70000-000', lat: -15.7 - n / 100, lng: -47.9 },
+      contatos: [{ tipo: 'telefone', valor: `(61) 9970${n}-0000`, publico_comercial: true, evidencia_ref: 'osm1' }],
+    });
+    await ingest([mk(1, 'Asa Norte', 'clinica_odontologica'), mk(2, 'Asa Norte', 'clinica_odontologica'), mk(3, 'Guará', 'academia')]);
+    const ops = await sql`select o.id, e.nome_fantasia from oportunidade o join empresa e on e.id = o.empresa_id where e.nome_fantasia like 'Clínica R%' order by 2`;
+    const [a, b, c] = ops.map((o) => o.id as string) as [string, string, string];
+    const envio = (op: string, tipo: string, horas: number) => sql`
+      insert into neo.envio (oportunidade_id, tipo, telefone, destino, teste, status, mensagem, enviado_em)
+      values (${op}, ${tipo}, '+55', '+55', false, 'enviado', 'oi', now() - make_interval(hours => ${horas}))`;
+    await envio(a, 'primeira', 100); await envio(b, 'primeira', 100); await envio(c, 'primeira', 100);
+    await envio(b, 'followup', 20);
+    // a respondeu à 1ª mensagem em 1 h e fechou por 3000; b respondeu ao follow-up; c não respondeu
+    await sql`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por, registrado_em)
+              values (${a}, 'whatsapp', 'entrada', 'quero', 'neo', now() - interval '99 hours'),
+                     (${b}, 'whatsapp', 'entrada', 'pode ser', 'neo', now() - interval '10 hours')`;
+    await sql`update oportunidade set status = 'reuniao' where id = ${a}`;
+    await sql`update oportunidade set status = 'ganha', proposta_valor = 3000 where id = ${a}`;
+    await sql`update oportunidade set status = 'respondeu' where id = ${b}`;
+    // envio de teste não conta
+    await sql`insert into neo.envio (oportunidade_id, tipo, telefone, destino, teste, status, enviado_em) values (${c}, 'followup', '+55', '+55', true, 'enviado', now())`;
+
+    const r = (await app.inject({ method: 'GET', url: '/v1/painel/resultados', headers: AUTH })).json();
+    expect(r.total).toMatchObject({ abordadas: 3, responderam: 2, reunioes: 1, ganhas: 1, valor_ganho: 3000, minutos_ate_resposta: 2730 });
+    expect(r.por_segmento[0]).toMatchObject({ nome: 'clinica_odontologica', abordadas: 2, responderam: 2, ganhas: 1 });
+    expect(r.por_bairro.map((x: { nome: string }) => x.nome)).toEqual(['Asa Norte', 'Guará']);
+    expect(r.por_mensagem).toEqual(expect.arrayContaining([{ nome: '1ª mensagem', responderam: 1 }, { nome: 'Follow-up', responderam: 1 }]));
+    const ultimos7 = (await app.inject({ method: 'GET', url: '/v1/painel/resultados?periodo=7', headers: AUTH })).json();
+    expect(ultimos7.total.abordadas).toBe(3);
+    expect((await app.inject({ method: 'GET', url: '/v1/painel/resultados?periodo=5', headers: AUTH })).statusCode).toBe(400);
+  });
+
   it('não deixa criar a mesma busca enquanto outra igual está ativa', async () => {
     const corpo = { uf: 'DF', cidade: 'Taguatinga', segmento: 'clinica_medica', bairros: ['Centro', 'Norte'] };
     const a = await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH, payload: corpo });

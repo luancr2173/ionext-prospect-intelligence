@@ -41,15 +41,19 @@ const semMovimento = () => matchMedia('(prefers-reduced-motion: reduce)').matche
 function contarNumeros(raiz) {
   if (semMovimento()) return;
   raiz.querySelectorAll('.kpi-valor, .passo-valor').forEach((el) => {
-    const alvo = Number(el.textContent.replace(/\D/g, ''));
+    // mantém o que vem antes/depois do número ("60%", "R$ 3.000")
+    const m = /^(\D*)([\d.]+)(\D*)$/.exec(el.textContent);
+    if (!m) return;
+    const [, antes, , depois] = m;
+    const alvo = Number(m[2].replace(/\./g, ''));
     if (!alvo) return;
     const t0 = performance.now(), dur = Math.min(900, 400 + alvo * 4);
     const passo = (t) => {
       const p = Math.min(1, (t - t0) / dur);
-      el.textContent = Math.round(alvo * (1 - Math.pow(1 - p, 3))).toLocaleString('pt-BR');
+      el.textContent = antes + Math.round(alvo * (1 - Math.pow(1 - p, 3))).toLocaleString('pt-BR') + depois;
       if (p < 1) requestAnimationFrame(passo);
     };
-    el.textContent = '0';
+    el.textContent = `${antes}0${depois}`;
     requestAnimationFrame(passo);
   });
 }
@@ -862,6 +866,87 @@ async function telaFunil(params) {
   $app.classList.add('largo');
 }
 
+// ------------------------------------------------------------------ resultados
+/** Do que o Neo abordou: onde respondem, marcam reunião e fecham. Grupos com menos de 10 abordagens aparecem como amostra pequena. */
+async function telaResultados(params) {
+  const periodo = params.get('periodo') || '';
+  const r = await api('GET', `/v1/painel/resultados${periodo ? `?periodo=${periodo}` : ''}`);
+  atualizarMotor();
+  const t = r.total;
+  const min = r.amostra_minima || 10;
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const tempo = (m) => m == null ? '—' : m < 60 ? `${m} min` : m < 60 * 48 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} dias`;
+  const aba = (valor, rotulo) => h('a', { class: `aba-canal${periodo === valor ? ' ativa' : ''}`, 'data-canal': valor, href: `#/resultados${valor ? `?periodo=${valor}` : ''}` }, rotulo);
+  const kpi = (rotulo, valor, nota, destaque) => h('div', { class: 'cartao compacto' },
+    h('div', { class: 'kpi-rotulo' }, rotulo), h('div', { class: `kpi-valor${destaque ? ' destaque' : ''}` }, valor), nota && h('div', { class: 'kpi-nota' }, nota));
+
+  // melhor grupo com amostra suficiente (sem amostra, não aponta vencedor)
+  const melhor = (lista) => lista.filter((x) => x.abordadas >= min && x.nome !== '—')
+    .sort((a, b) => pct(b.responderam, b.abordadas) - pct(a.responderam, a.abordadas))[0];
+  const mSeg = melhor(r.por_segmento); const mBairro = melhor(r.por_bairro);
+
+  const comValor = t.valor_ganho > 0;
+  const tabela = (titulo, lista, nomeDe, limite = 10) => h('div', { class: 'cartao' },
+    h('h2', {}, titulo),
+    lista.length === 0 ? h('p', { class: 'legenda' }, 'Sem dados no período.') : h('div', { class: 'rolagem-x' },
+      h('table', { class: 'tabela tabela-resultado' },
+        h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', { class: 'num' }, 'Abord.'), h('th', {}, 'Respostas'), h('th', { class: 'num' }, 'Reuniões'), h('th', { class: 'num' }, 'Ganhas'), comValor && h('th', { class: 'num' }, 'Valor'))),
+        h('tbody', {}, lista.slice(0, limite).map((x) => h('tr', { class: x.abordadas < min ? 'pouca-amostra' : '' },
+          h('td', { class: 'col-nome' }, h('div', { class: 'item-titulo' }, nomeDe(x.nome)),
+            x.abordadas < min && h('div', { class: 'amostra', title: `Menos de ${min} abordagens: ainda não dá para comparar` }, 'amostra pequena')),
+          h('td', { class: 'num' }, x.abordadas),
+          h('td', { title: `${x.responderam} de ${x.abordadas} responderam` }, h('div', { class: 'taxa' }, h('span', { class: 'trilho' }, h('span', { style: { width: `${pct(x.responderam, x.abordadas)}%` } })),
+            h('span', { class: 'taxa-num' }, `${pct(x.responderam, x.abordadas)}%`))),
+          h('td', { class: 'num' }, x.reunioes),
+          h('td', { class: 'num' }, x.ganhas),
+          comValor && h('td', { class: 'num' }, x.valor_ganho ? moeda(x.valor_ganho) : '—')))))),
+    lista.length > limite && h('p', { class: 'ajuda', style: { marginTop: '10px' } }, `+ ${lista.length - limite} com menos abordagens`));
+
+  $app.replaceChildren(
+    h('div', { class: 'cabecalho' }, h('div', {},
+      h('span', { class: 'indice mono' }, '(04) — Resultado'),
+      h('h1', {}, 'Resul', h('em', {}, 'tados')),
+      h('p', { class: 'legenda' }, 'Do que o Neo abordou: onde as empresas respondem, marcam reunião e fecham.'))),
+    h('div', { class: 'linha-filtros' },
+      h('div', { class: 'abas-canal' }, aba('', 'Tudo'), aba('90', '90 dias'), aba('30', '30 dias'), aba('7', '7 dias'))),
+    ...(t.abordadas === 0
+      ? [h('div', { class: 'cartao' }, h('div', { class: 'hoje-vazio' }, 'Nenhuma abordagem real do Neo no período. Os resultados aparecem assim que as primeiras mensagens saírem.'))]
+      : [
+        h('div', { class: 'grade grade-4' },
+          kpi('Abordadas', t.abordadas.toLocaleString('pt-BR'), periodo ? `nos últimos ${periodo} dias` : 'desde o início'),
+          kpi('Taxa de resposta', `${pct(t.responderam, t.abordadas)}%`, `${t.responderam} responderam · metade em até ${tempo(t.minutos_ate_resposta)}`, true),
+          kpi('Reuniões', t.reunioes.toLocaleString('pt-BR'), `${pct(t.reunioes, t.responderam)}% de quem respondeu`),
+          kpi('Ganhas', t.ganhas.toLocaleString('pt-BR'), t.valor_ganho ? `${moeda(t.valor_ganho)} fechados` : [`${t.perdidas} perdida${t.perdidas === 1 ? '' : 's'}`, `${t.opt_outs} opt-out`].join(' · '))),
+        h('div', { class: 'cartao destaque-resultado', style: { marginTop: '16px' } },
+          h('h2', {}, 'Onde vale ', h('em', {}, 'insistir')),
+          (mSeg || mBairro)
+            ? h('ul', { class: 'motivos' },
+              mSeg && h('li', {}, `Segmento com mais resposta: `, h('b', {}, nomeSegmento(mSeg.nome)), ` (${pct(mSeg.responderam, mSeg.abordadas)}% de ${mSeg.abordadas} abordadas).`),
+              mBairro && h('li', {}, `Bairro com mais resposta: `, h('b', {}, mBairro.nome), ` (${pct(mBairro.responderam, mBairro.abordadas)}% de ${mBairro.abordadas} abordadas).`))
+            : h('p', { class: 'legenda', style: { margin: 0 } }, `Ainda poucas abordagens para comparar: cada grupo precisa de pelo menos ${min}. Os números abaixo já servem para acompanhar, mas não para escolher onde buscar.`)),
+        h('div', { class: 'grade grade-2 iguais', style: { marginTop: '16px' } },
+          tabela('Por segmento', r.por_segmento, nomeSegmento),
+          tabela('Por bairro', r.por_bairro, (n) => n, 12)),
+        h('div', { class: 'grade grade-2 iguais', style: { marginTop: '16px' } },
+          tabela('Por presença digital', r.por_presenca, (n) => CLASSES[n] || n),
+          tabela('Por dia do envio', r.por_dia, (n) => n)),
+        h('div', { class: 'grade grade-2 iguais', style: { marginTop: '16px' } },
+          h('div', { class: 'cartao' }, h('h2', {}, 'Mensagem que gerou a resposta'),
+            r.por_mensagem.length === 0 ? h('p', { class: 'legenda' }, 'Ninguém respondeu ainda.') :
+              h('div', { class: 'conversao' }, r.por_mensagem.map((x) => h('div', { class: 'passo passo-curto' },
+                h('span', { class: 'passo-rotulo' }, x.nome),
+                h('span', { class: 'trilho' }, h('span', { style: { width: `${pct(x.responderam, t.responderam)}%` } })),
+                h('span', { class: 'passo-valor' }, x.responderam)))),
+            h('p', { class: 'ajuda', style: { marginTop: '10px' } }, 'Mostra se vale manter o follow-up: quantas respostas vieram só depois dele.')),
+          h('div', { class: 'cartao' }, h('h2', {}, 'Motivos de perda'),
+            r.motivos_perda.length === 0 ? h('p', { class: 'legenda' }, 'Nenhuma perda registrada no período.') :
+              h('div', { class: 'conversao' }, r.motivos_perda.map((x) => h('div', { class: 'passo passo-curto' },
+                h('span', { class: 'passo-rotulo' }, MOTIVOS_PERDA[x.motivo] || x.motivo),
+                h('span', { class: 'trilho perda' }, h('span', { style: { width: `${pct(x.total, t.perdidas)}%` } })),
+                h('span', { class: 'passo-valor' }, x.total))))))]),
+  );
+}
+
 async function telaEmpresa(id) {
   const f = await api('GET', `/v1/empresas/${id}`);
   const e = f.empresa;
@@ -1222,11 +1307,11 @@ async function render() {
   const params = new URLSearchParams(qs || '');
   document.querySelectorAll('.abas a').forEach((a) => a.classList.toggle('ativa',
     (a.dataset.aba === 'inicio' && caminho === '/') || (a.dataset.aba === 'empresas' && caminho.startsWith('/empresa'))
-    || (a.dataset.aba === 'funil' && caminho === '/funil')));
+    || (a.dataset.aba === 'funil' && caminho === '/funil') || (a.dataset.aba === 'resultados' && caminho === '/resultados')));
   moverIndicador(!primeira);
   // filtro na mesma tela: a pílula vai para a opção clicada na hora, antes dos dados chegarem
   if (filtrando && !semMovimento()) {
-    const canalNovo = params.get('canal') || '';
+    const canalNovo = params.get('canal') || params.get('periodo') || '';
     const opcoes = $app.querySelectorAll('.abas-canal [data-canal]');
     if (opcoes.length) {
       opcoes.forEach((o) => o.classList.toggle('ativa', o.dataset.canal === canalNovo));
@@ -1243,6 +1328,7 @@ async function render() {
       }, 10_000);
     } else if (caminho === '/empresas') await telaEmpresas(params);
     else if (caminho === '/funil') await telaFunil(params);
+    else if (caminho === '/resultados') await telaResultados(params);
     else if (caminho.startsWith('/empresa/')) await telaEmpresa(caminho.split('/')[2]);
     else location.hash = '#/';
     if (caminho !== '/funil') $app.classList.remove('largo'); // só depois de a tela nova estar pronta (evita o pulo lateral)

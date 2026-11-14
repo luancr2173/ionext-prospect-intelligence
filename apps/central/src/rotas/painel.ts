@@ -435,6 +435,87 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
     return reply.code(204).send();
   });
 
+  /**
+   * Resultado da prospecção: das empresas que o Neo abordou (envios reais), quantas responderam,
+   * marcaram reunião, fecharam e por quanto — por segmento, bairro, presença digital, mensagem que
+   * gerou a resposta e dia do envio. periodo = dias desde a primeira mensagem (vazio = tudo).
+   */
+  app.get('/painel/resultados', async (req) => {
+    const { periodo } = z.object({ periodo: z.enum(['7', '30', '90']).optional() }).parse(req.query);
+    const linhas = await sql`
+      with ab as (
+        select distinct on (o.id) o.id, o.status, o.proposta_valor::float as valor, o.motivo_perda,
+               e.segmento, e.bairro, p.classificacao, x.enviado_em as primeira_em
+          from neo.envio x
+          join oportunidade o on o.id = x.oportunidade_id
+          join empresa e on e.id = o.empresa_id
+          left join presenca_digital p on p.empresa_id = e.id
+         where x.tipo = 'primeira' and x.status = 'enviado' and not x.teste
+           ${periodo ? sql`and x.enviado_em >= now() - make_interval(days => ${Number(periodo)})` : sql``}
+         order by o.id, x.enviado_em)
+      select ab.*,
+             r.primeira_resposta,
+             (select min(f.enviado_em) from neo.envio f where f.oportunidade_id = ab.id and f.tipo = 'followup'
+                 and f.status = 'enviado' and not f.teste) as followup_em,
+             exists (select 1 from oportunidade_etapa h where h.oportunidade_id = ab.id and h.para in ('reuniao', 'proposta', 'ganha')) as teve_reuniao,
+             exists (select 1 from opt_out z where z.oportunidade_id = ab.id) as pediu_opt_out,
+             extract(isodow from ab.primeira_em at time zone 'America/Sao_Paulo')::int as dia_semana
+        from ab
+        left join lateral (select min(i.registrado_em) as primeira_resposta from interacao i
+                            where i.oportunidade_id = ab.id and i.direcao = 'entrada' and i.registrado_em >= ab.primeira_em) r on true
+       limit 10000`;
+
+    type Linha = (typeof linhas)[number];
+    const respondeu = (l: Linha) => !!l.primeira_resposta || ['respondeu', 'reuniao', 'proposta', 'ganha'].includes(l.status as string);
+    const reuniao = (l: Linha) => !!l.teve_reuniao || ['reuniao', 'proposta', 'ganha'].includes(l.status as string);
+    const ganha = (l: Linha) => l.status === 'ganha';
+    const resumir = (grupo: Linha[]) => ({
+      abordadas: grupo.length,
+      responderam: grupo.filter(respondeu).length,
+      reunioes: grupo.filter(reuniao).length,
+      ganhas: grupo.filter(ganha).length,
+      perdidas: grupo.filter((l) => l.status === 'perdida').length,
+      opt_outs: grupo.filter((l) => l.pediu_opt_out).length,
+      valor_ganho: grupo.filter(ganha).reduce((t, l) => t + ((l.valor as number | null) ?? 0), 0),
+    });
+    const quebrar = (chave: (l: Linha) => string | null) => {
+      const grupos = new Map<string, Linha[]>();
+      for (const l of linhas) {
+        const k = chave(l) ?? '—';
+        grupos.set(k, [...(grupos.get(k) ?? []), l]);
+      }
+      return [...grupos.entries()].map(([nome, g]) => ({ nome, ...resumir(g) }))
+        .sort((a, b) => b.abordadas - a.abordadas || a.nome.localeCompare(b.nome));
+    };
+    // tempo até a primeira resposta (mediana, em minutos)
+    const tempos = linhas.filter((l) => l.primeira_resposta)
+      .map((l) => (new Date(l.primeira_resposta as string).getTime() - new Date(l.primeira_em as string).getTime()) / 60000).sort((a, b) => a - b);
+    const mediana = tempos.length ? Math.round(tempos[Math.floor((tempos.length - 1) / 2)]! * 0.5 + tempos[Math.ceil((tempos.length - 1) / 2)]! * 0.5) : null;
+    const DIAS = ['', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+
+    return {
+      periodo: periodo ?? null,
+      total: { ...resumir(linhas), minutos_ate_resposta: mediana },
+      amostra_minima: 10,
+      por_segmento: quebrar((l) => l.segmento as string | null),
+      por_bairro: quebrar((l) => (l.bairro ? nomeBairro(String(l.bairro)) : null)),
+      por_presenca: quebrar((l) => l.classificacao as string | null),
+      por_mensagem: (() => {
+        // qual mensagem gerou a primeira resposta (quem não respondeu fica de fora)
+        const r = linhas.filter((l) => l.primeira_resposta);
+        const ap = (l: Linha) => (l.followup_em && new Date(l.followup_em as string) <= new Date(l.primeira_resposta as string) ? 'Follow-up' : '1ª mensagem');
+        const contagem = new Map<string, number>();
+        r.forEach((l) => contagem.set(ap(l), (contagem.get(ap(l)) ?? 0) + 1));
+        return [...contagem.entries()].map(([nome, responderam]) => ({ nome, responderam })).sort((a, b) => b.responderam - a.responderam);
+      })(),
+      por_dia: quebrar((l) => DIAS[l.dia_semana as number] ?? null)
+        .sort((a, b) => DIAS.indexOf(a.nome) - DIAS.indexOf(b.nome)),
+      motivos_perda: Object.entries(linhas.filter((l) => l.status === 'perdida' && l.motivo_perda)
+        .reduce<Record<string, number>>((m, l) => ({ ...m, [l.motivo_perda as string]: (m[l.motivo_perda as string] ?? 0) + 1 }), {}))
+        .map(([motivo, total]) => ({ motivo, total })).sort((a, b) => b.total - a.total),
+    };
+  });
+
   /** Sinal de vida e métricas de um motor (o painel mostra se está rodando, cota de busca web etc.). */
   app.put('/motores/:nome', async (req) => {
     const { nome } = z.object({ nome: z.string().regex(/^[a-z0-9-]{2,40}$/) }).parse(req.params);

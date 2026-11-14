@@ -105,7 +105,7 @@ em, .serif { font-family: var(--serif); font-style: italic; font-weight: 400; le
 .marca-produto { color: var(--suave); font-size: 13px; }
 .marca-produto em { color: var(--azul); font-size: 15px; }
 .abas { display: flex; gap: 2px; flex: 1; padding: 3px; }
-.abas a { padding: 6px 14px; border-radius: 999px; color: var(--suave); font-size: 14px; font-weight: 500; transition: color .15s, background .15s; }
+.abas a { padding: 6px 14px; white-space: nowrap; flex-shrink: 0; border-radius: 999px; color: var(--suave); font-size: 14px; font-weight: 500; transition: color .15s, background .15s; }
 .abas a:hover { color: var(--texto); }
 .abas a.ativa { color: var(--primario-texto); background: var(--primario-fundo); }
 .busca-rapida input { width: 210px; padding: 7px 14px; border-radius: 999px; font-size: 13px; background: var(--hover); }
@@ -138,7 +138,8 @@ h2 em { color: var(--azul); font-size: 1.15em; }
   .grade-4 { grid-template-columns: repeat(2, 1fr); } .grade-2 { grid-template-columns: 1fr; }
   /* no celular as abas descem para uma linha própria, com rolagem lateral */
   .topo { flex-wrap: wrap; gap: 10px 16px; }
-  .abas { order: 3; flex-basis: 100%; overflow-x: auto; }
+  .abas { order: 3; flex-basis: 100%; overflow-x: auto; scrollbar-width: none; }
+  .abas a { padding: 6px 12px; font-size: 13.5px; }
   .marca-produto { display: none; }
   .motor { margin-left: auto; }
 }
@@ -537,3 +538,22 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .acoes-cabecalho { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .perdas { flex-basis: 100%; }
 @media (max-width: 700px) { .nova-tarefa-linha { grid-template-columns: 1fr 1fr; } .nova-tarefa-linha input[type=text] { grid-column: 1 / -1; } }
+
+/* ---------------------------------------------------------------- Resultados */
+.grade-2.iguais { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 1000px) { .grade-2.iguais { grid-template-columns: minmax(0, 1fr); } }
+.rolagem-x { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
+.tabela-resultado td, .tabela-resultado th { white-space: nowrap; padding-left: 8px; padding-right: 8px; }
+.tabela-resultado .col-nome { white-space: normal; min-width: 120px; }
+.tabela-resultado tbody tr { cursor: default; }
+.tabela-resultado tr.pouca-amostra .item-titulo { color: var(--suave); }
+.amostra { display: inline-block; margin-top: 3px; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--apagado);
+  border: 1px solid var(--linha-forte); border-radius: 999px; padding: 1px 7px; }
+.taxa { display: grid; grid-template-columns: 52px auto; gap: 8px; align-items: center; }
+.taxa .trilho { height: 8px; border-radius: 999px; background: var(--superficie-2); overflow: hidden; }
+.taxa .trilho span { display: block; height: 100%; border-radius: 999px; background: var(--azul); }
+.taxa-num { font-variant-numeric: tabular-nums; font-weight: 600; }
+.passo-curto { grid-template-columns: 140px minmax(0, 1fr) 44px; }
+.trilho.perda span { background: var(--vermelho); }
+.destaque-resultado .motivos { margin: 0; }
+@media (max-width: 700px) { .tabela-resultado { font-size: 13px; } }
