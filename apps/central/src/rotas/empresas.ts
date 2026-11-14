@@ -115,7 +115,7 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
             from oportunidade o where o.empresa_id = ${id}`,
       sql`select * from revisao_merge where status = 'pendente' and (empresa_a = ${id} or empresa_b = ${id})`,
       sql`select numero, fonte from neo._whatsapp(${id})`,
-      sql`select x.tipo, x.teste, x.status, x.destino, x.mensagem, x.erro, x.reservado_em, x.enviado_em
+      sql`select x.tipo, x.teste, x.status, x.telefone, x.destino, x.mensagem, x.erro, x.reservado_em, x.enviado_em
             from neo.envio x join oportunidade o on o.id = x.oportunidade_id
            where o.empresa_id = ${id} order by x.reservado_em desc limit 20`,
     ]);

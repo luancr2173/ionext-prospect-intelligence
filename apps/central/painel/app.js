@@ -895,11 +895,14 @@ function cartaoNeo(neo) {
   if (!neo) return null;
   const rotulo = { reservado: 'na fila', enviado: 'enviado', falhou: 'falhou', cancelado: 'cancelado' };
   const classe = { reservado: 'e-media', enviado: 'e-ok', falhou: 'e-baixa', cancelado: 'e-baixa' };
+  const semZap = neo.envios.find((x) => x.erro === 'número sem WhatsApp');
   return h('div', { class: 'cartao' },
     h('h2', {}, 'Neo (WhatsApp)'),
     neo.whatsapp
       ? h('p', {}, `Número para abordagem: ${neo.whatsapp.numero}`, h('br'), h('small', { class: 'legenda' }, `celular comercial · fonte: ${neo.whatsapp.fonte}`))
-      : h('p', { class: 'ajuda' }, 'Sem celular comercial confirmado. O Neo não aborda telefone fixo; mesmo aprovada, esta empresa não entra na fila.'),
+      : semZap
+        ? h('p', { class: 'ajuda' }, `O número ${telFmt(semZap.telefone || semZap.destino)} não tem WhatsApp (conferido em ${quando(semZap.reservado_em)}). O Neo não vai abordar esta empresa; ligue ou procure outro contato.`)
+        : h('p', { class: 'ajuda' }, 'Sem celular comercial confirmado. O Neo não aborda telefone fixo; mesmo aprovada, esta empresa não entra na fila.'),
     neo.envios.length === 0 ? h('p', { class: 'legenda' }, 'Nenhuma mensagem até agora.') :
       neo.envios.map((x) => h('div', { class: 'evid' },
         h('span', { class: `etiqueta ${classe[x.status] || ''}` }, rotulo[x.status] || x.status),

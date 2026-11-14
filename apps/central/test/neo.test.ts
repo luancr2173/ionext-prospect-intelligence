@@ -106,8 +106,31 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     await aprovada('Clínica Sem Zap', '61 99876-0009', 'semzap');
     const [r] = await reservar();
     const [x] = await sql`select neo.registrar_sem_whatsapp(${r!.envio_id}) as r`;
-    expect(x!.r).toEqual({ ok: true });
+    expect(x!.r).toEqual({ ok: true, saiu_da_fila: false }); // modo teste não mexe no funil
     expect(await reservar()).toHaveLength(0);
+    const [w] = await sql`select count(*)::int as n from neo._whatsapp((select empresa_id from oportunidade where id = ${r!.oportunidade_id}))`;
+    expect(w!.n).toBe(0); // o painel deixa de mostrar esse número como WhatsApp
+  });
+
+  it('fora do modo teste, sem WhatsApp tira da fila do Neo; com outro celular, tenta o outro', async () => {
+    await cfg('modo_teste', 'false');
+    const op = await aprovada('Clínica Sem Zap Real', '61 99876-0019', 'semzapreal');
+    const [r] = await reservar();
+    const [x] = await sql`select neo.registrar_sem_whatsapp(${r!.envio_id}) as r`;
+    expect(x!.r).toEqual({ ok: true, saiu_da_fila: true });
+    const [o] = await sql`select status from oportunidade where id = ${op}`;
+    expect(o!.status).toBe('revisada');
+
+    const op2 = await aprovada('Clínica Dois Celulares', '61 99876-0020', 'doiscel');
+    const [{ empresa_id }] = await sql`select empresa_id from oportunidade where id = ${op2}` as unknown as [{ empresa_id: string }];
+    await sql`insert into contato (empresa_id, tipo, valor, valor_normalizado, publico_comercial)
+              values (${empresa_id}, 'telefone', '61 99876-0021', '+5561998760021', true)`;
+    const [r2] = await reservar();
+    await sql`select neo.registrar_sem_whatsapp(${r2!.envio_id})`;
+    const [o2] = await sql`select status from oportunidade where id = ${op2}`;
+    expect(o2!.status).toBe('aprovada_para_contato');
+    const [r3] = await reservar();
+    expect(r3!.telefone).not.toBe(r2!.telefone);
   });
 
   it('depois de 3 falhas a oportunidade sai da fila', async () => {

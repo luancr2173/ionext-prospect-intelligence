@@ -5,8 +5,8 @@ const agenda = trigger({
   type: 'n8n-nodes-base.scheduleTrigger',
   version: 1.4,
   config: {
-    name: 'A cada 20 min (seg–sex, 9h–18h)',
-    parameters: { rule: { interval: [{ field: 'cronExpression', expression: '0 */20 9-17 * * 1-5' }] } },
+    name: 'A cada 20 min (todos os dias, 9h–18h)',
+    parameters: { rule: { interval: [{ field: 'cronExpression', expression: '0 */20 9-17 * * *' }] } },
     position: [0, 300]
   },
   output: [{}]
@@ -172,7 +172,7 @@ const registrarRecusa = node({
   output: [{ resultado: { ok: true, teste: true } }]
 });
 
-const nota = sticky('## Neo — prospecção (modo teste)\nO banco decide tudo: janela seg–sex 9h–18h, 15/dia, opt-out, só celular, follow-up após 3 dias.\nEnquanto `neo.config.modo_teste = true`, TODAS as mensagens vão para `numero_teste` e o funil não muda.\nMensagem que não passa na validação NÃO é enviada (fica registrada como falha).', [reservar, loop], { color: 4 });
+const nota = sticky('## Neo — prospecção\nO banco decide tudo: janela todos os dias 9h–18h (neo.config.dias_semana), 15/dia, opt-out, só celular, follow-up após 3 dias.\nEnquanto `neo.config.modo_teste = true`, TODAS as mensagens vão para `numero_teste` e o funil não muda.\nMensagem que não passa na validação NÃO é enviada (fica registrada como falha).', [reservar, loop], { color: 4 });
 
 export default workflow('neo-prospeccao', '(Ionext - Neo) Prospecção — primeira mensagem + follow-up')
   .add(agenda)
