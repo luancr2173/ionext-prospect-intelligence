@@ -311,6 +311,22 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect((await app.inject({ method: 'POST', url: `/v1/buscas/${criada.id}/cancelar`, headers: AUTH })).statusCode).toBe(409);
   });
 
+  it('exclui a busca sem apagar as empresas encontradas', async () => {
+    const id = (await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH,
+      payload: { uf: 'GO', cidade: 'Goiânia', segmento: 'academia' } })).json().id as string;
+    const [emp] = await sql`insert into empresa (nome_fantasia, nome_normalizado) values ('Academia Teste', 'academia teste') returning id`;
+    await sql`insert into busca_resultado (busca_id, chave, empresa_id, acao) values (${id}, 'teste:1', ${emp!.id}, 'criada')`;
+    const [antes] = await sql`select count(*)::int as n from empresa`;
+    await sql`update busca set status = 'executando' where id = ${id}`;
+    expect((await app.inject({ method: 'DELETE', url: `/v1/buscas/${id}`, headers: AUTH })).statusCode).toBe(409);
+    await sql`update busca set status = 'concluida' where id = ${id}`;
+    expect((await app.inject({ method: 'DELETE', url: `/v1/buscas/${id}`, headers: AUTH })).statusCode).toBe(204);
+    const [depois] = await sql`select count(*)::int as n from empresa`;
+    expect(depois!.n).toBe(antes!.n);
+    expect((await sql`select 1 from busca_resultado where busca_id = ${id}`).length).toBe(0);
+    expect((await app.inject({ method: 'GET', url: `/v1/buscas/${id}`, headers: AUTH })).statusCode).toBe(404);
+  });
+
   it('lista bairros da cidade para o seletor da nova busca', async () => {
     await sql`insert into receita.estabelecimento (cnpj, cnpj_basico, matriz, situacao, cnae_principal, uf, municipio_codigo, municipio_nome, bairro, bairro_normalizado, referencia)
       values ('99000000000101','99000000',true,'ATIVA','8630504','DF','9701','BRASILIA','GUARA II','guara ii','t'),

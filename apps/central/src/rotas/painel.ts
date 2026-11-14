@@ -126,6 +126,24 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
     return b;
   });
 
+  /**
+   * Exclui a busca da lista. As empresas e oportunidades que ela encontrou continuam (só o vínculo
+   * "encontrada por esta busca" some). Busca na fila ou rodando precisa ser cancelada antes.
+   */
+  app.delete('/buscas/:id', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const [b] = await sql`select status from busca where id = ${id}`;
+    if (!b) return reply.code(404).send({ erro: 'busca não encontrada' });
+    if (['planejada', 'executando', 'reprocessar'].includes(b.status)) {
+      return reply.code(409).send({ erro: 'Essa busca ainda está rodando. Cancele antes de excluir.' });
+    }
+    await sql.begin(async (tx) => {
+      await tx`delete from motor.busca_progresso where busca_id = ${id}`;
+      await tx`delete from busca where id = ${id}`; // busca_resultado sai junto (on delete cascade); empresas ficam
+    });
+    return reply.code(204).send();
+  });
+
   /** Pede ao Motor 01 para verificar de novo as empresas da busca (com as regras atuais). */
   app.post('/buscas/:id/reprocessar', async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);

@@ -114,7 +114,11 @@ async function main() {
         const { status } = await ctx.central.obterBusca(buscaId);
         statusBusca.set(buscaId, { status, em: Date.now() });
         return status === 'cancelada';
-      } catch { return false; }
+      } catch (e) {
+        // busca excluída no painel conta como cancelada; qualquer outra falha não para o trabalho
+        if ((e as { status?: number }).status === 404) { statusBusca.set(buscaId, { status: 'cancelada', em: Date.now() }); return true; }
+        return false;
+      }
     };
     await b.work<{ busca_id: string }>(FILA_PLANEJAR, async ([job]) => {
       if (await cancelada(job!.data.busca_id)) return log(`busca ${job!.data.busca_id} cancelada antes de começar`);
