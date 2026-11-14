@@ -12,6 +12,13 @@ apt-get update -qq
 apt-get install -y -qq ca-certificates curl git >/dev/null
 if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com | sh >/dev/null; fi
 
+# Máquina pequena (ex.: Oracle E2.1.Micro com 1 GB): cria 2 GB de memória extra em disco para o build não travar
+if [ "$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)" -lt 2000 ] && ! swapon --show | grep -q swapfile; then
+  echo "==> Pouca memória: criando 2 GB de swap"
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 # Oracle Cloud: as imagens Ubuntu já vêm com iptables fechado (só SSH) e a Oracle desaconselha o ufw
 # (pode quebrar a conexão do disco). Lá abrimos 80/443 no iptables; nas outras VPS usamos ufw.
 if curl -sf -m 2 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/instance/ >/dev/null 2>&1; then
