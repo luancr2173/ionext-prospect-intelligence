@@ -146,7 +146,7 @@ Todas as rotas `/v1`, exceto `/health`, exigem `Authorization: Bearer <segredo>`
 Painel + Motor 01 numa VPS Ubuntu com HTTPS automático (Caddy) em `crm.ionext.com.br`:
 
 1. DNS: registro `A` de `crm` apontando para o IP da VPS.
-2. Na VPS, como root: `curl -fsSL https://raw.githubusercontent.com/luancr2173/ionext-prospect-intelligence/main/deploy/instalar.sh | bash`
+2. Na VPS, como root: `curl -fsSL https://raw.githubusercontent.com/luancr2173/ionext-prospect-intelligence/main/deploy/instalar.sh | sudo bash`
 3. Preencha `/opt/ionext-crm/.env` (mesmas chaves do PC + `CRM_DOMINIO` e `PAINEL_SENHA` com 14+ caracteres) e rode `bash /opt/ionext-crm/deploy/instalar.sh` de novo.
 4. Atualizar depois: `bash /opt/ionext-crm/deploy/atualizar.sh`.
 
