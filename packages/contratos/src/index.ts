@@ -136,3 +136,48 @@ export type IngestCandidatas = z.infer<typeof IngestCandidatas>;
 export type RespostaIngest = z.infer<typeof RespostaIngest>;
 export type EvidenciaManual = z.infer<typeof EvidenciaManual>;
 export type OptOut = z.infer<typeof OptOut>;
+
+// ------------------------------------------------------------------ Motor 02 · auditoria de sites
+const MetricasPsi = z.object({
+  estrategia: z.enum(['mobile', 'desktop']),
+  desempenho: z.number().int().min(0).max(100).nullable(),
+  seo: z.number().int().min(0).max(100).nullable(),
+  acessibilidade: z.number().int().min(0).max(100).nullable(),
+  boas_praticas: z.number().int().min(0).max(100).nullable(),
+  lcp_ms: z.number().nullable(),
+  cls: z.number().nullable(),
+  tbt_ms: z.number().nullable(),
+  viewport_ok: z.boolean().nullable(),
+  https_ok: z.boolean().nullable(),
+  url_final: z.string().nullable(),
+  screenshot: z.string().max(400_000).nullable(),
+});
+
+export const AchadoAuditoria = z.object({
+  codigo: z.string().min(1).max(60),
+  gravidade: z.enum(['grave', 'moderado', 'oportunidade', 'info']),
+  titulo: z.string().min(1).max(200),
+  detalhe: z.string().max(1000),
+  pagina: z.string().max(2000).nullable(),
+  evidencia: z.string().max(1000).nullable(),
+  recomendacao: z.string().max(500),
+  servico: z.string().max(120).nullable(),
+});
+
+/** Resultado de uma auditoria (Motor 02 → Central). A Central recalcula a classe pelos achados. */
+export const DiagnosticoSite = z.object({
+  motor: z.string().regex(/^audit@\d+\.\d+\.\d+$/),
+  empresa_id: z.string().uuid(),
+  url: z.string().url(),
+  url_final: z.string().url().nullable(),
+  executada_em: iso,
+  psi: z.object({ mobile: MetricasPsi.nullable(), desktop: MetricasPsi.nullable() }),
+  paginas: z.array(z.object({ url: z.string(), status: z.number().int().nullable() })).max(50),
+  achados: z.array(AchadoAuditoria).max(40),
+  pontos_positivos: z.array(z.object({ codigo: z.string().max(60), titulo: z.string().max(200), detalhe: z.string().max(500) })).max(20),
+  resumo: z.string().max(500),
+  servicos_recomendados: z.array(z.string().max(120)).max(10),
+  classe: z.enum(['B', 'C', 'D']),
+  sinais: z.record(z.unknown()).default({}),
+});
+export type DiagnosticoSite = z.infer<typeof DiagnosticoSite>;

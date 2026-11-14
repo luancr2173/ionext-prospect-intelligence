@@ -1,4 +1,4 @@
-﻿# Sobe a Central + o Motor 01 nesta janela e abre o painel no navegador.
+﻿# Sobe a Central + o Motor 01 + o Motor 02 (auditoria de sites) nesta janela e abre o painel no navegador.
 #   powershell -ExecutionPolicy Bypass -File .\iniciar.ps1
 # Para parar: Ctrl+C nesta janela.
 $ErrorActionPreference = 'Stop'
@@ -17,14 +17,14 @@ if (-not (Select-String -Path $env_ -Pattern '^PAINEL_SENHA=.{8,}' -Quiet)) {
 }
 
 # Remove variáveis antigas desta janela para valer o que está no .env
-'DATABASE_URL','CENTRAL_API_KEYS','CENTRAL_API_KEY','CENTRAL_URL','TAVILY_API_KEY','EXA_API_KEY','PAINEL_SENHA' |
+'DATABASE_URL','CENTRAL_API_KEYS','CENTRAL_API_KEY','CENTRAL_URL','TAVILY_API_KEY','EXA_API_KEY','PAINEL_SENHA','PAGESPEED_API_KEY' |
   ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
 
 # Abre o painel quando a Central já estiver no ar
 Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 12; Start-Process http://localhost:3333'
 
 Write-Host ""
-Write-Host "IONEXT Prospect Intelligence subindo (Central + Motor 01)..." -ForegroundColor Cyan
+Write-Host "IONEXT Prospect Intelligence subindo (Central + Motor 01 + auditoria de sites)..." -ForegroundColor Cyan
 Write-Host "O painel abre sozinho em http://localhost:3333. Para parar: Ctrl+C."
 Write-Host ""
 pnpm install --silent

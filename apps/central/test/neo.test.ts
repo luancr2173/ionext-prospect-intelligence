@@ -117,6 +117,14 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     await cfg('hora_fim_sabado', '12');
   });
 
+  it('oportunidade com site (B/C/D) não entra na fila do Neo, mesmo aprovada', async () => {
+    const op = await aprovada('Clínica Tipo B', '61 99876-0050', 'tipob');
+    await sql`update oportunidade set tipo = 'B' where id = ${op}`;
+    expect(await reservar()).toHaveLength(0);
+    await sql`update oportunidade set tipo = 'A' where id = ${op}`;
+    expect(await reservar()).toHaveLength(1);
+  });
+
   it('número sem WhatsApp não volta para a fila', async () => {
     await aprovada('Clínica Sem Zap', '61 99876-0009', 'semzap');
     const [r] = await reservar();

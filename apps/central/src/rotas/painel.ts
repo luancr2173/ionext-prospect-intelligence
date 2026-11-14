@@ -296,6 +296,7 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
     const linhas = await sql`update oportunidade set status = ${p.status}, responsavel = ${req.cliente}
                               where id = any(${p.ids}::uuid[]) and status <> ${p.status}
                                 and status in ('nova', 'revisada', 'aprovada_para_contato', 'descartada')
+                                ${p.status === 'aprovada_para_contato' ? sql`and tipo = 'A'` : sql``}
                               returning id`;
     return { atualizadas: linhas.length };
   });
@@ -388,8 +389,11 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
       motivo_perda: z.enum(MOTIVOS_PERDA).optional(),
       motivo_perda_obs: z.string().trim().max(500).optional(),
     }).parse(req.body);
-    const [atual] = await sql`select status, motivo_perda from oportunidade where id = ${id}`;
+    const [atual] = await sql`select status, motivo_perda, tipo from oportunidade where id = ${id}`;
     if (!atual) return reply.code(404).send({ erro: 'oportunidade não encontrada' });
+    if (p.status === 'aprovada_para_contato' && atual.tipo !== 'A' && atual.status !== 'aprovada_para_contato') {
+      return reply.code(409).send({ erro: 'O Neo ainda só aborda empresas sem site (oportunidade A). Para esta, entre em contato você mesmo.' });
+    }
     const motivo = p.status === 'perdida' ? (p.motivo_perda ?? atual.motivo_perda ?? null) : null;
     if (p.status === 'perdida' && !motivo) return reply.code(400).send({ erro: 'Informe o motivo da perda.' });
     const obs = p.status === 'perdida' ? (p.motivo_perda !== undefined ? (p.motivo_perda_obs || null) : undefined) : null;

@@ -9,6 +9,7 @@ A arquitetura completa está em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
 ```
 apps/central            API da Central de Oportunidades (Fastify + Postgres)
 apps/motor-prospecting  Motor 01: base da Receita, verificações V2–V6, busca web gratuita, envio à Central
+apps/motor-audit        Motor 02: auditoria de sites (PageSpeed Insights + leitura do HTML), diagnóstico B/C/D
 packages/dominio        Regras puras: CNPJ alfanumérico, normalização, classificação de presença, Lead Score
 packages/contratos      Contratos v1 (Zod) entre motores, Central e Neo
 supabase/migrations     Schema do banco (fonte única, aplicado no Supabase e nos testes)
@@ -21,10 +22,10 @@ docs/                   Arquitetura e decisões
 |---|---|
 | 0 · Fundação (schema, Central, dedup, score, opt-out, testes) | ✅ concluída |
 | 1 · Motor 01 MVP (ETL Receita + OSM + verificações V2–V6 + busca web gratuita + varredura pelo Claude) | ✅ concluída (falta a primeira execução real) |
-| 2 · Painel | — |
+| 2 · Painel (visão geral, funil, ficha, resultados, exportação) | ✅ concluída |
 | 3 · FSQ OS Places + V1/V5 | — |
-| 4 · Motor 02 (auditoria de sites) | — |
-| 5 · Integração com o Neo (n8n) | — |
+| 4 · Motor 02 (auditoria de sites) | ✅ v0.1: PageSpeed + HTML, sem navegador |
+| 5 · Integração com o Neo (n8n) | ✅ prospecção e atendimento (só oportunidade A) |
 
 ## Rodando localmente
 
@@ -111,6 +112,18 @@ Segmentos disponíveis: `clinica_odontologica`, `clinica_medica`, `academia`, `r
 
 Contatos de MEI vindos da Receita entram com `publico_comercial = false` (podem ser pessoais, LGPD).
 
+## Motor 02 — auditoria de sites
+
+Sobe junto com o resto (`pnpm start` / `iniciar.ps1`). Pega da Central as empresas com site, lê até 8 páginas internas
+(links, formulários, WhatsApp, telefone clicável, título/descrição, rodapé, sitemap, conteúdo sem HTTPS) e roda o
+PageSpeed Insights no celular e no computador. Classe por regra fixa (`packages/dominio/src/auditoria.ts`):
+**B** site fora do ar ou 2+ falhas graves · **C** 1 grave ou 3+ moderados · **D** nenhum dos anteriores.
+
+- Sem `PAGESPEED_API_KEY` funciona, mas o Google limita: a auditoria tenta de novo (15 min, 30 min, 1 h…) e, na
+  4ª tentativa, audita só pelo HTML. Com a chave (gratuita) fica rápido.
+- Auditar um site sem gravar nada: `pnpm --filter @ionext/motor-audit cli auditar --url https://site.com.br`
+- O Neo ainda só aborda oportunidades **A** (sem site); B/C/D aparecem no CRM com o relatório para contato manual.
+
 ## API (v1)
 
 Todas as rotas `/v1`, exceto `/health`, exigem `Authorization: Bearer <segredo>` (veja `CENTRAL_API_KEYS`) ou a sessão do painel (cookie httpOnly; escritas exigem também o cabeçalho `x-painel: 1`).
@@ -130,6 +143,10 @@ Todas as rotas `/v1`, exceto `/health`, exigem `Authorization: Bearer <segredo>`
 | GET | `/v1/painel/resumo` | números da visão geral + estado dos motores |
 | PUT | `/v1/motores/:nome` | sinal de vida e métricas de um motor |
 | POST | `/v1/opt-out` | pedido de oposição ao contato (LGPD): bloqueia e descarta oportunidades abertas |
+| POST | `/v1/auditorias/reservar` | Motor 02 pede trabalho (a Central põe na fila os sites ainda não auditados ou auditados há 90+ dias) |
+| POST | `/v1/auditorias` | Motor 02 entrega o `DiagnosticoSite`; a Central recalcula a classe, grava evidências e cria a oportunidade B/C/D |
+| POST | `/v1/auditorias/:empresa_id/falha` | falha temporária: volta para a fila com espera crescente |
+| POST | `/v1/empresas/:id/auditar` | "Auditar de novo" no painel (fura a fila) |
 
 ## Regras que não se negociam
 

@@ -137,14 +137,14 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
     const [empresa] = await sql`select * from empresa where id = ${id}`;
     if (!empresa) return reply.code(404).send({ erro: 'empresa não encontrada' });
 
-    const [contatos, identificadores, evidencias, presenca, auditorias, oportunidades, revisoes, whatsapp, envios] = await Promise.all([
+    const [contatos, identificadores, evidencias, presenca, auditorias, oportunidades, revisoes, whatsapp, envios, pedidoAuditoria] = await Promise.all([
       sql`select c.tipo, c.valor, c.publico_comercial, c.evidencia_id, ev.fonte, ev.url as fonte_url
             from contato c left join evidencia ev on ev.id = c.evidencia_id where c.empresa_id = ${id}`,
       sql`select fonte, valor from identificador_externo where empresa_id = ${id}`,
       sql`select id, fonte, url, coletado_em, expira_em, confiabilidade, operador, payload
             from evidencia where empresa_id = ${id} order by coletado_em desc`,
       sql`select * from presenca_digital where empresa_id = ${id}`,
-      sql`select * from auditoria where empresa_id = ${id} order by executada_em desc`,
+      sql`select * from auditoria where empresa_id = ${id} order by executada_em desc limit 3`,
       sql`select o.*, coalesce((select json_agg(i order by i.registrado_em desc) from interacao i
                                 where i.oportunidade_id = o.id), '[]') as interacoes,
                    coalesce((select json_agg(x order by x.em desc) from oportunidade_etapa x
@@ -160,6 +160,7 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
       sql`select x.tipo, x.teste, x.status, x.telefone, x.destino, x.mensagem, x.erro, x.reservado_em, x.enviado_em
             from neo.envio x join oportunidade o on o.id = x.oportunidade_id
            where o.empresa_id = ${id} order by x.reservado_em desc limit 20`,
+      sql`select motivo, pedido_em, reservado_em, tentativas, proxima_tentativa, ultimo_erro from auditoria_pedido where empresa_id = ${id}`,
     ]);
 
     const tiposContato = new Set(contatos.map((c) => c.tipo as string));
@@ -172,7 +173,7 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
 
     return {
       empresa: dados, contatos, identificadores, presenca_digital: presenca[0] ?? null,
-      auditorias, oportunidades, revisoes_merge_pendentes: revisoes,
+      auditorias, auditoria_pedido: pedidoAuditoria[0] ?? null, oportunidades, revisoes_merge_pendentes: revisoes,
       neo: { whatsapp: whatsapp[0] ?? null, envios },
       validacao: {
         fontes: [...new Set(evidencias.map((e) => e.fonte as string))],

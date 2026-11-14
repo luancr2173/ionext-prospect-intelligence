@@ -486,6 +486,64 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect((await app.inject({ method: 'GET', url: '/v1/painel/resultados?periodo=5', headers: AUTH })).statusCode).toBe(400);
   });
 
+  it('Motor 02: fila de auditoria, diagnóstico B/C/D, oportunidade e bloqueio para o Neo', async () => {
+    const comSite = candidata({
+      nome_fantasia: 'Clínica Com Site', identificadores: [{ fonte: 'osm', valor: 'node/980' }],
+      contatos: [{ tipo: 'telefone', valor: '(61) 99222-1100', publico_comercial: true, evidencia_ref: 'osm1' }],
+      verificacoes: { ...verificacoesSemSite, V4: { status: 'site_encontrado', url: 'https://clinicacomsite.com.br/', acessivel: true } },
+    });
+    await ingest([comSite]);
+    const [p] = await sql`select e.id, p.classificacao, p.url_site from empresa e join presenca_digital p on p.empresa_id = e.id where e.nome_fantasia = 'Clínica Com Site'`;
+    expect(p).toMatchObject({ classificacao: 'SITE_EXISTENTE', url_site: 'https://clinicacomsite.com.br/' });
+    const empresaId = p!.id as string;
+    expect((await sql`select count(*)::int as n from oportunidade where empresa_id = ${empresaId}`)[0]!.n).toBe(0); // sem auditoria, sem oportunidade
+
+    const reservar = async () => (await app.inject({ method: 'POST', url: '/v1/auditorias/reservar', headers: AUTH, payload: { limite: 5 } })).json();
+    const r1 = await reservar();
+    expect(r1.itens).toHaveLength(1);
+    expect(r1.itens[0]).toMatchObject({ empresa_id: empresaId, url: 'https://clinicacomsite.com.br/', tentativas: 1, motivo: 'novo' });
+    expect((await reservar()).itens).toHaveLength(0); // já reservada
+
+    // falha temporária: volta para a fila mais tarde
+    const f = await app.inject({ method: 'POST', url: `/v1/auditorias/${empresaId}/falha`, headers: AUTH, payload: { erro: 'PageSpeed: 429' } });
+    expect(new Date(f.json().proxima_tentativa).getTime()).toBeGreaterThan(Date.now() + 10 * 60_000);
+    expect((await reservar()).itens).toHaveLength(0);
+    // "auditar de novo" no painel fura a fila
+    await app.inject({ method: 'POST', url: `/v1/empresas/${empresaId}/auditar`, headers: AUTH });
+    expect((await reservar()).itens[0]).toMatchObject({ motivo: 'manual', tentativas: 1 });
+
+    const achado = (codigo: string, gravidade: string) => ({ codigo, gravidade, titulo: codigo, detalhe: 'x', pagina: 'https://clinicacomsite.com.br/', evidencia: 'y', recomendacao: 'z', servico: 'reformulação do site' });
+    const diag = {
+      motor: 'audit@0.1.0', empresa_id: empresaId, url: 'https://clinicacomsite.com.br/', url_final: 'https://clinicacomsite.com.br/',
+      executada_em: new Date().toISOString(),
+      psi: { mobile: { estrategia: 'mobile', desempenho: 21, seo: 70, acessibilidade: 80, boas_praticas: 75, lcp_ms: 7000, cls: 0.2, tbt_ms: 900, viewport_ok: false, https_ok: true, url_final: null, screenshot: 'data:image/jpeg;base64,AAAA' }, desktop: null },
+      paginas: [{ url: 'https://clinicacomsite.com.br/', status: 200 }],
+      achados: [achado('muito_lento_celular', 'grave'), achado('sem_versao_celular', 'grave'), achado('sem_atendimento_automatico', 'oportunidade')],
+      pontos_positivos: [{ codigo: 'https', titulo: 'Conexão segura', detalhe: 'ok' }],
+      resumo: 'Site desatualizado: muito lento no celular e não está adaptado para celular.',
+      servicos_recomendados: ['reformulação do site'], classe: 'D', // classe errada de propósito: a Central recalcula
+      sinais: { viewport: false },
+    };
+    const res = await app.inject({ method: 'POST', url: '/v1/auditorias', headers: AUTH, payload: diag });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ classe: 'B', oportunidade: 'B' });
+    const [op] = await sql`select id, tipo, status, lead_score from oportunidade where empresa_id = ${empresaId}`;
+    expect(op).toMatchObject({ tipo: 'B', status: 'nova' });
+    const ficha = (await app.inject({ method: 'GET', url: `/v1/empresas/${empresaId}`, headers: AUTH })).json();
+    expect(ficha.auditorias[0]).toMatchObject({ classe: 'B', resumo: diag.resumo, screenshots: ['data:image/jpeg;base64,AAAA'] });
+    expect(ficha.auditorias[0].psi.mobile.screenshot).toBeNull(); // o print fica só em screenshots
+    expect(ficha.auditoria_pedido).toBeNull();
+    expect(ficha.validacao.fontes).toEqual(expect.arrayContaining(['pagespeed', 'crawler']));
+    expect((await reservar()).itens).toHaveLength(0); // auditada há menos de 90 dias
+
+    // o Neo ainda não aborda B/C/D
+    const apr = await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${op!.id}`, headers: AUTH, payload: { status: 'aprovada_para_contato' } });
+    expect(apr.statusCode).toBe(409);
+    const lote = await app.inject({ method: 'POST', url: '/v1/oportunidades/status-em-lote', headers: AUTH, payload: { ids: [op!.id], status: 'aprovada_para_contato' } });
+    expect(lote.json()).toEqual({ atualizadas: 0 });
+    expect((await app.inject({ method: 'POST', url: '/v1/auditorias', headers: AUTH, payload: { ...diag, motor: 'x' } })).statusCode).toBe(400);
+  });
+
   it('não deixa criar a mesma busca enquanto outra igual está ativa', async () => {
     const corpo = { uf: 'DF', cidade: 'Taguatinga', segmento: 'clinica_medica', bairros: ['Centro', 'Norte'] };
     const a = await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH, payload: corpo });

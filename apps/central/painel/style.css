@@ -135,7 +135,7 @@ h2 em { color: var(--azul); font-size: 1.15em; }
 .grade-2 { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; }
 @media (max-width: 1100px) { .busca-rapida { display: none; } }
 @media (max-width: 900px) {
-  .grade-4 { grid-template-columns: repeat(2, 1fr); } .grade-2 { grid-template-columns: 1fr; }
+  .grade-4 { grid-template-columns: repeat(2, 1fr); } .grade-2 { grid-template-columns: minmax(0, 1fr); }
   /* no celular as abas descem para uma linha própria, com rolagem lateral */
   .topo { flex-wrap: wrap; gap: 10px 16px; }
   .abas { order: 3; flex-basis: 100%; overflow-x: auto; scrollbar-width: none; }
@@ -143,7 +143,7 @@ h2 em { color: var(--azul); font-size: 1.15em; }
   .marca-produto { display: none; }
   .motor { margin-left: auto; }
 }
-.pilha { display: grid; gap: 16px; }
+.pilha { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
 
 .cartao { background: var(--superficie); border: 1px solid var(--linha); border-radius: var(--raio-g); padding: 22px; }
 .cartao.compacto { padding: 18px 20px; }
@@ -557,3 +557,34 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .trilho.perda span { background: var(--vermelho); }
 .destaque-resultado .motivos { margin: 0; }
 @media (max-width: 700px) { .tabela-resultado { font-size: 13px; } }
+
+/* ---------------------------------------------------------------- Auditoria do site (Motor 02) */
+.auditoria h3 { font-size: 13px; font-family: var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--suave); font-weight: 500; margin: 18px 0 8px; }
+.resumo-auditoria { margin: 0 0 14px; font-size: 15px; }
+.psi { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.psi-coluna { border: 1px solid var(--linha); border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+.psi-notas { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.psi-nota { display: grid; justify-items: center; gap: 4px; font-size: 11px; color: var(--suave); text-align: center; }
+.nota-psi { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px;
+  border: 3px solid var(--linha-forte); color: var(--texto); font-variant-numeric: tabular-nums; }
+.nota-psi.boa { border-color: var(--verde); color: var(--verde); }
+.nota-psi.media { border-color: var(--ambar); color: var(--ambar); }
+.nota-psi.ruim { border-color: var(--vermelho); color: var(--vermelho); }
+.prints { display: flex; gap: 12px; align-items: flex-start; margin: 4px 0 6px; }
+.prints img { border: 1px solid var(--linha); border-radius: 10px; background: var(--superficie-2); }
+.print-celular { width: 120px; }
+.print-desktop { width: min(320px, 60%); }
+.achados { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.achado { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--linha); border-radius: 12px; font-size: 14px; }
+.achado-grave { border-color: var(--vermelho-borda); }
+.achado-topo { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.achado-evid { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 12px; }
+.achado-evid code { font-family: var(--mono); font-size: 11.5px; background: var(--superficie-2); border-radius: 6px; padding: 2px 6px; overflow-wrap: anywhere; }
+.razao-grave { color: var(--vermelho); border-color: var(--vermelho-borda); background: var(--vermelho-fundo); }
+.razao-moderado { color: var(--ambar); border-color: color-mix(in srgb, var(--ambar) 40%, transparent); background: var(--ambar-fundo); }
+.razao-oportunidade { color: var(--azul); border-color: var(--azul-borda); background: var(--azul-fundo); }
+.razao-info { color: var(--suave); }
+.positivos { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 700px) { .psi { grid-template-columns: 1fr; } .prints { flex-direction: column; } .print-desktop { width: 100%; } }
+.evid > div { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .motor .motor-texto { display: none; } }

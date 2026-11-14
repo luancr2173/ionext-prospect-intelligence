@@ -1,0 +1,18 @@
+{
+  "name": "@ionext/motor-audit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "worker": "tsx src/cli.ts worker"
+  },
+  "dependencies": {
+    "@ionext/contratos": "workspace:*",
+    "@ionext/dominio": "workspace:*",
+    "node-html-parser": "^9.0.7"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

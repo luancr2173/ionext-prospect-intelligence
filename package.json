@@ -8,9 +8,9 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p apps/central && tsc -p apps/motor-prospecting && tsc -p packages/dominio && tsc -p packages/contratos",
+    "typecheck": "tsc -p apps/central && tsc -p apps/motor-prospecting && tsc -p apps/motor-audit && tsc -p packages/dominio && tsc -p packages/contratos",
     "central:dev": "pnpm --filter @ionext/central dev",
-    "start": "concurrently --kill-others-on-fail -n central,motor -c blue,magenta \"pnpm --filter @ionext/central start\" \"pnpm --filter @ionext/motor-prospecting worker\""
+    "start": "concurrently --kill-others-on-fail -n central,motor,audit -c blue,magenta,cyan \"pnpm --filter @ionext/central start\" \"pnpm --filter @ionext/motor-prospecting worker\" \"pnpm --filter @ionext/motor-audit worker\""
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

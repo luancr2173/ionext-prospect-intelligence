@@ -227,6 +227,10 @@ async function atualizarMotor() {
       const fila = m.dados.fila_claude || {};
       if (fila.pendente) partes.push(`fila Claude ${fila.pendente}`);
     }
+    const au = (r.motores || []).find((x) => x.nome === 'motor-audit');
+    const auOnline = au && au.segundos_atras < 120;
+    partes.push(!auOnline ? 'auditoria parada' : au.dados.na_fila ? `auditoria: ${au.dados.na_fila} na fila` : 'auditoria em dia');
+    el.title = `Motor 01 (prospecção): ${online ? 'rodando' : 'parado'} · Motor 02 (auditoria de sites): ${auOnline ? `rodando, PageSpeed ${au.dados.pagespeed || ''}` : 'parado'}`;
     el.querySelector('.motor-texto').textContent = partes.join(' · ');
     return r;
   } catch { el.className = 'motor offline'; return null; }
@@ -641,9 +645,11 @@ async function telaEmpresas(params) {
   const atualizarBarra = () => {
     barra.hidden = selecionadas.size === 0;
     const semZap = r.itens.filter((e) => selecionadas.has(e.oportunidade_id) && e.canal !== 'whatsapp').length;
+    const comSite = r.itens.filter((e) => selecionadas.has(e.oportunidade_id) && e.oportunidade && e.oportunidade !== 'A').length;
     barra.replaceChildren(
       h('span', {}, `${selecionadas.size} selecionada${selecionadas.size > 1 ? 's' : ''}`),
       semZap > 0 && h('span', { class: 'ajuda' }, `${semZap} sem WhatsApp: o Neo não vai abordar essas.`),
+      comSite > 0 && h('span', { class: 'ajuda' }, `${comSite} com site (B/C/D): não vão para o Neo.`),
       h('div', { class: 'acoes' },
         h('button', { class: 'botao azul pequeno', onclick: () => emLote('aprovada_para_contato', 'aprovadas para o Neo') }, 'Aprovar para o Neo'),
         h('button', { class: 'botao pequeno', onclick: () => emLote('revisada', 'marcadas como revisadas') }, 'Marcar revisadas'),
@@ -995,6 +1001,7 @@ async function telaEmpresa(id) {
             h('p', { class: 'legenda' }, 'Ainda não verificada.'),
           verif && verif.motivos && h('ul', { class: 'motivos' }, verif.motivos.map((m) => h('li', {}, m.replace(/\bV([1-6])\b/g, (_, n) => VERIF[`V${n}`]))))),
 
+        cartaoAuditoria(f, e.id),
         op && h('div', { class: 'cartao' },
           h('h2', {}, `Lead Score · ${op.lead_score}`),
           (op.score_detalhe || []).map((l) => h('div', { class: 'linha-score' },
@@ -1141,7 +1148,9 @@ function cartaoAcoes(op, empresa) {
       op.servicos_sugeridos && op.servicos_sugeridos.length ? ` · Sugestão: ${op.servicos_sugeridos.join(', ')}` : ''),
     h('div', { class: 'acoes' },
       // antes do contato: revisar e aprovar para o Neo
-      ['nova', 'revisada'].includes(op.status) && h('button', { class: 'botao azul', onclick: () => mudar('aprovada_para_contato', 'Aprovada para o Neo.') }, 'Aprovar para o Neo'),
+      ['nova', 'revisada'].includes(op.status) && (op.tipo === 'A'
+        ? h('button', { class: 'botao azul', onclick: () => mudar('aprovada_para_contato', 'Aprovada para o Neo.') }, 'Aprovar para o Neo')
+        : h('button', { class: 'botao', disabled: true, title: 'O Neo ainda só aborda empresas sem site. Entre em contato você mesmo, usando o relatório da auditoria.' }, 'Neo: só sem site')),
       op.status === 'nova' && h('button', { class: 'botao', onclick: () => mudar('revisada', 'Marcada como revisada.') }, 'Marcar revisada'),
       op.status === 'aprovada_para_contato' && h('button', { class: 'botao', onclick: () => mudar('revisada', 'Tirada da fila do Neo.') }, 'Tirar da fila do Neo'),
       // depois do contato: etapas do funil
@@ -1183,6 +1192,63 @@ function cartaoTarefas(op) {
     } },
       h('div', { class: 'nova-tarefa-linha' }, titulo, data, h('button', { class: 'botao pequeno', type: 'submit' }, 'Adicionar')),
       h('div', { class: 'chips-data' }, atalho('Hoje', diaMais(0)), atalho('Amanhã', diaMais(1)), atalho('Em 3 dias', diaMais(3)), atalho('Próxima segunda', proxSegunda()))));
+}
+
+const CLASSE_SITE = { B: ['Desatualizado', 'e-erro'], C: ['Funciona, com problemas', 'e-alerta'], D: ['Moderno', 'e-ok'] };
+const GRAVIDADE = { grave: 'Grave', moderado: 'Moderado', oportunidade: 'Oportunidade', info: 'Observação' };
+
+/** Relatório do Motor 02: notas do PageSpeed, prints, problemas com evidência, pontos positivos e o que a IONEXT resolve. */
+function cartaoAuditoria(f, empresaId) {
+  const p = f.presenca_digital;
+  const a = (f.auditorias || [])[0];
+  const pedido = f.auditoria_pedido;
+  if (!a && !(p && p.url_site)) return null;
+  const auditarDeNovo = h('button', { class: 'botao pequeno', type: 'button', onclick: async () => {
+    try { await api('POST', `/v1/empresas/${empresaId}/auditar`); aviso('Na fila: o motor audita em instantes.'); render(); } catch (e) { aviso(e.message); }
+  } }, a ? 'Auditar de novo' : 'Auditar agora');
+  const estadoFila = pedido && h('p', { class: 'ajuda', style: { margin: '0 0 12px' } },
+    pedido.reservado_em ? 'Auditando agora…'
+      : pedido.ultimo_erro ? `Na fila. A última tentativa falhou (${pedido.ultimo_erro}); nova tentativa ${quando(pedido.proxima_tentativa)}.`
+        : `Na fila de auditoria desde ${quando(pedido.pedido_em)}.`);
+  if (!a) {
+    return h('div', { class: 'cartao' },
+      h('div', { class: 'titulo-cartao' }, h('h2', {}, 'Auditoria do site')),
+      estadoFila || h('p', { class: 'legenda' }, 'Ainda não auditado. O Motor 02 audita os sites encontrados automaticamente.'),
+      h('div', { class: 'acoes' }, !pedido && auditarDeNovo));
+  }
+  const nota = (v) => h('span', { class: `nota-psi ${v == null ? '' : v >= 90 ? 'boa' : v >= 50 ? 'media' : 'ruim'}` }, v ?? '—');
+  const colunaPsi = (m, rotulo) => m && h('div', { class: 'psi-coluna' },
+    h('div', { class: 'kpi-rotulo' }, rotulo),
+    h('div', { class: 'psi-notas' },
+      [['Desempenho', m.desempenho], ['SEO', m.seo], ['Acessibilidade', m.acessibilidade], ['Boas práticas', m.boas_praticas]]
+        .map(([r, v]) => h('div', { class: 'psi-nota' }, nota(v), h('span', {}, r)))),
+    m.lcp_ms != null && h('div', { class: 'item-sub' }, `Conteúdo principal em ${(m.lcp_ms / 1000).toFixed(1)} s`));
+  const problemas = (a.achados || []).filter((x) => x.gravidade === 'grave' || x.gravidade === 'moderado');
+  const outros = (a.achados || []).filter((x) => x.gravidade === 'oportunidade' || x.gravidade === 'info');
+  const achado = (x) => h('li', { class: `achado achado-${x.gravidade}` },
+    h('div', { class: 'achado-topo' }, h('span', { class: `razao razao-${x.gravidade}` }, GRAVIDADE[x.gravidade]), h('b', {}, x.titulo)),
+    h('div', {}, x.detalhe),
+    (x.pagina || x.evidencia) && h('div', { class: 'achado-evid' }, x.pagina ? linkSeguro(x.pagina, x.pagina.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)) : '', x.evidencia ? h('code', {}, x.evidencia) : ''),
+    h('div', { class: 'item-sub' }, `Recomendação: ${x.recomendacao}`));
+  const [rotulo, cls] = CLASSE_SITE[a.classe] || [a.classe, ''];
+  return h('div', { class: 'cartao auditoria' },
+    h('div', { class: 'titulo-cartao' }, h('h2', {}, 'Auditoria do site'), h('span', { class: `etiqueta ${cls}` }, `${a.classe} · ${rotulo}`)),
+    h('p', { class: 'legenda', style: { margin: '-6px 0 12px' } }, `${quando(a.executada_em)} · `, linkSeguro(a.url_final || a.url, (a.url_final || a.url).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')),
+      ` · ${(a.paginas || []).length} página(s) lidas`),
+    a.resumo && h('p', { class: 'resumo-auditoria' }, a.resumo),
+    estadoFila,
+    (a.psi && (a.psi.mobile || a.psi.desktop)) ? h('div', { class: 'psi' }, colunaPsi(a.psi.mobile, 'PageSpeed · celular'), colunaPsi(a.psi.desktop, 'PageSpeed · computador'))
+      : h('p', { class: 'ajuda' }, 'Sem notas do PageSpeed nesta auditoria (o Google não respondeu); a classe saiu só da leitura do site.'),
+    (a.screenshots || []).length > 0 && h('div', { class: 'prints' }, a.screenshots.map((src, i) => h('img', { src, alt: i === 0 ? 'Página no celular (PageSpeed)' : 'Página no computador (PageSpeed)', loading: 'lazy', class: i === 0 ? 'print-celular' : 'print-desktop' }))),
+    problemas.length ? [h('h3', {}, `Problemas (${problemas.length})`), h('ul', { class: 'achados' }, problemas.map(achado))]
+      : h('p', { class: 'legenda' }, 'Nenhum problema relevante encontrado.'),
+    outros.length > 0 && [h('h3', {}, 'Oportunidades e observações'), h('ul', { class: 'achados' }, outros.map(achado))],
+    (a.pontos_positivos || []).length > 0 && [h('h3', {}, 'Pontos positivos'),
+      h('div', { class: 'positivos' }, a.pontos_positivos.map((x) => h('span', { class: 'etiqueta e-ok', title: x.detalhe }, x.titulo)))],
+    (a.servicos_recomendados || []).length > 0 && [h('h3', {}, 'O que a IONEXT pode resolver'),
+      h('div', { class: 'positivos' }, a.servicos_recomendados.map((x) => h('span', { class: 'etiqueta' }, x)))],
+    h('div', { class: 'acoes', style: { marginTop: '14px' } }, !pedido && auditarDeNovo,
+      h('span', { class: 'ajuda' }, 'Nunca diga ao cliente que o site é "ruim": use os pontos positivos e fale de oportunidade.')));
 }
 
 const SOLUCOES = ['Site institucional', 'Landing page', 'Reformulação do site', 'Sistema personalizado', 'Atendimento com IA no WhatsApp', 'Automação comercial'];

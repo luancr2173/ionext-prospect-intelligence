@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
 import type { Sql } from './db.ts';
+import { rotasAuditorias } from './rotas/auditorias.ts';
 import { rotasBuscas } from './rotas/buscas.ts';
 import { rotasEmpresas } from './rotas/empresas.ts';
 import { rotasIngest } from './rotas/ingest.ts';
@@ -140,6 +141,7 @@ export function criarApp(sql: Sql, apiKeys: Map<string, string>, opts: OpcoesApp
     rotasOptOut(v1, sql);
     rotasBuscas(v1, sql);
     rotasPainel(v1, sql);
+    rotasAuditorias(v1, sql);
   }, { prefix: '/v1' });
 
   return app;
