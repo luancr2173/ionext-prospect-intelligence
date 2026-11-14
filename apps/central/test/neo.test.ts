@@ -102,6 +102,21 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(r!.telefone).toBe('+5561981234567');
   });
 
+  it('janela: sábado só até o meio-dia, domingo fechado', async () => {
+    await cfg('dias_semana', '1,2,3,4,5,6'); await cfg('hora_inicio', '9'); await cfg('hora_fim', '18');
+    // ::text antes de ::timestamp: senão o driver converte a string pelo fuso local
+    const aberta = async (t: string) => (await sql`select neo._janela_aberta(${t}::text::timestamp) as a`)[0]!.a;
+    expect(await aberta('2026-11-13 17:30')).toBe(true);   // sexta
+    expect(await aberta('2026-11-13 18:00')).toBe(false);
+    expect(await aberta('2026-11-14 11:59')).toBe(true);   // sábado
+    expect(await aberta('2026-11-14 12:00')).toBe(false);
+    expect(await aberta('2026-11-14 08:59')).toBe(false);
+    expect(await aberta('2026-11-15 10:00')).toBe(false);  // domingo
+    await cfg('hora_fim_sabado', '');
+    expect(await aberta('2026-11-14 15:00')).toBe(true);   // vazio = mesmo horário dos outros dias
+    await cfg('hora_fim_sabado', '12');
+  });
+
   it('número sem WhatsApp não volta para a fila', async () => {
     await aprovada('Clínica Sem Zap', '61 99876-0009', 'semzap');
     const [r] = await reservar();

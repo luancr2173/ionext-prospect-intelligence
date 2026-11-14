@@ -172,7 +172,7 @@ const registrarRecusa = node({
   output: [{ resultado: { ok: true, teste: true } }]
 });
 
-const nota = sticky('## Neo — prospecção\nO banco decide tudo: janela seg–sáb 9h–18h (neo.config.dias_semana; o gatilho roda todo dia), 15/dia, opt-out, só celular, follow-up após 3 dias.\nEnquanto `neo.config.modo_teste = true`, TODAS as mensagens vão para `numero_teste` e o funil não muda.\nMensagem que não passa na validação NÃO é enviada (fica registrada como falha).', [reservar, loop], { color: 4 });
+const nota = sticky('## Neo — prospecção\nO banco decide tudo: janela seg–sex 9h–18h e sáb 9h–12h (neo.config; o gatilho roda todo dia), 15/dia, opt-out, só celular, follow-up após 3 dias.\nEnquanto `neo.config.modo_teste = true`, TODAS as mensagens vão para `numero_teste` e o funil não muda.\nMensagem que não passa na validação NÃO é enviada (fica registrada como falha).', [reservar, loop], { color: 4 });
 
 export default workflow('neo-prospeccao', '(Ionext - Neo) Prospecção — primeira mensagem + follow-up')
   .add(agenda)
