@@ -1,0 +1,30 @@
+# CRM online numa VPS: Caddy (HTTPS automático) na frente do container único (Central + Motor 01).
+# Usado por deploy/instalar.sh e deploy/atualizar.sh. Domínio em CRM_DOMINIO no ../.env.
+services:
+  crm:
+    build: ..
+    env_file: ../.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3333"
+      CENTRAL_URL: http://127.0.0.1:3333
+      COOKIE_SEGURO: "1"
+      TRUST_PROXY: "1"
+    expose: ["3333"]
+    restart: unless-stopped
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  caddy:
+    image: caddy:2
+    env_file: ../.env
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_dados:/data
+      - caddy_config:/config
+    depends_on: [crm]
+    restart: unless-stopped
+
+volumes:
+  caddy_dados:
+  caddy_config:

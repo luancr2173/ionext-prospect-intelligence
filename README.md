@@ -140,3 +140,14 @@ Todas as rotas `/v1`, exceto `/health`, exigem `Authorization: Bearer <segredo>`
 - Opt-out bloqueia a empresa em todas as entradas.
 - Nenhuma mensagem é enviada sem aprovação humana.
 - Sem scraping do Google Maps, Instagram ou Facebook.
+
+## CRM online (VPS)
+
+Painel + Motor 01 numa VPS Ubuntu com HTTPS automático (Caddy) em `crm.ionext.com.br`:
+
+1. DNS: registro `A` de `crm` apontando para o IP da VPS.
+2. Na VPS, como root: `curl -fsSL https://raw.githubusercontent.com/luancr2173/ionext-prospect-intelligence/main/deploy/instalar.sh | bash`
+3. Preencha `/opt/ionext-crm/.env` (mesmas chaves do PC + `CRM_DOMINIO` e `PAINEL_SENHA` com 14+ caracteres) e rode `bash /opt/ionext-crm/deploy/instalar.sh` de novo.
+4. Atualizar depois: `bash /opt/ionext-crm/deploy/atualizar.sh`.
+
+Online, o login bloqueia o IP por 15 min após 5 senhas erradas e o cookie só trafega por HTTPS. Os dados ficam no Supabase; a VPS não guarda nada além do `.env`.

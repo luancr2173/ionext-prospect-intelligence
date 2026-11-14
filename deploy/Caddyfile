@@ -1,0 +1,4 @@
+{$CRM_DOMINIO} {
+	encode zstd gzip
+	reverse_proxy crm:3333
+}
