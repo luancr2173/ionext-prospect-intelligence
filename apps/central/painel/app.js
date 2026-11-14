@@ -298,6 +298,25 @@ function cartaoConversao(f) {
         h('span', { class: 'ajuda' }, 'Conta a etapa atual de cada oportunidade.'))]);
 }
 
+/** Cancelar pede confirmação no próprio botão (2 cliques em até 4 s), sem janela do navegador. */
+function botaoCancelarBusca(b) {
+  let armado = null;
+  const botao = h('button', { class: 'botao pequeno perigo', type: 'button', title: 'Para a busca; o que já foi verificado continua no painel',
+    onclick: async () => {
+      if (!armado) {
+        botao.textContent = 'Confirmar?';
+        botao.classList.add('armado');
+        armado = setTimeout(() => { armado = null; botao.textContent = 'Cancelar'; botao.classList.remove('armado'); }, 4000);
+        return;
+      }
+      clearTimeout(armado);
+      botao.disabled = true;
+      try { await api('POST', `/v1/buscas/${b.id}/cancelar`); aviso('Busca cancelada. O motor para em até 15 s; o que já foi verificado fica.'); render(); }
+      catch (e) { aviso(e.message); botao.disabled = false; }
+    } }, 'Cancelar');
+  return botao;
+}
+
 function listaBuscas(buscas) {
   if (!buscas.length) return h('div', { class: 'legenda' }, 'Nenhuma busca ainda.');
   return h('div', { class: 'lista' }, buscas.map((b) => {
@@ -313,6 +332,7 @@ function listaBuscas(buscas) {
         h('span', { class: `etiqueta ${b.status === 'concluida' ? 'e-ok' : b.status === 'falhou' ? 'e-erro' : andando ? 'e-alerta' : ''}` },
           STATUS_BUSCA[b.status] || b.status, andando && b.total_celulas ? ` ${b.concluidas}/${b.total_celulas}` : ''),
         h('a', { class: 'botao pequeno', href: `#/empresas?busca=${b.id}` }, 'Ver empresas'),
+        andando && botaoCancelarBusca(b),
         b.status === 'concluida' && h('button', {
           class: 'botao pequeno', type: 'button', title: 'Verifica de novo com as regras atuais (a busca web usa o cache)',
           onclick: async (ev) => {

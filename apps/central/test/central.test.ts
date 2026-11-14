@@ -285,6 +285,17 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(o!.d).toBe(12);
   });
 
+  it('cancela busca em andamento e o motor não a reativa', async () => {
+    const criada = (await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH,
+      payload: { uf: 'DF', cidade: 'Brasília', segmento: 'clinica_odontologica' } })).json();
+    await app.inject({ method: 'PATCH', url: `/v1/buscas/${criada.id}`, headers: AUTH, payload: { status: 'executando', total_celulas: 10 } });
+    const c = await app.inject({ method: 'POST', url: `/v1/buscas/${criada.id}/cancelar`, headers: AUTH });
+    expect(c.json().status).toBe('cancelada');
+    const motor = await app.inject({ method: 'PATCH', url: `/v1/buscas/${criada.id}`, headers: AUTH, payload: { status: 'concluida', concluidas: 3 } });
+    expect(motor.json()).toMatchObject({ status: 'cancelada', concluidas: 3 });
+    expect((await app.inject({ method: 'POST', url: `/v1/buscas/${criada.id}/cancelar`, headers: AUTH })).statusCode).toBe(409);
+  });
+
   it('lista bairros da cidade para o seletor da nova busca', async () => {
     await sql`insert into receita.estabelecimento (cnpj, cnpj_basico, matriz, situacao, cnae_principal, uf, municipio_codigo, municipio_nome, bairro, bairro_normalizado, referencia)
       values ('99000000000101','99000000',true,'ATIVA','8630504','DF','9701','BRASILIA','GUARA II','guara ii','t'),

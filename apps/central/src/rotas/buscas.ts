@@ -33,10 +33,11 @@ export function rotasBuscas(app: FastifyInstance, sql: Sql) {
     }).parse(req.body);
     const [b] = await sql`
       update busca set
-        status = coalesce(${p.status ?? null}, status),
+        -- busca cancelada pelo painel não volta a andar por atualização do motor (só "Reprocessar" a retoma)
+        status = case when status = 'cancelada' then status else coalesce(${p.status ?? null}, status) end,
         total_celulas = coalesce(${p.total_celulas ?? null}::int, total_celulas),
         concluidas = coalesce(${p.concluidas ?? null}::int, concluidas),
-        concluida_em = case when ${p.status ?? null} = 'concluida' then now() else concluida_em end
+        concluida_em = case when status <> 'cancelada' and ${p.status ?? null} = 'concluida' then now() else concluida_em end
       where id = ${id} returning id, status, total_celulas, concluidas`;
     if (!b) return reply.code(404).send({ erro: 'busca não encontrada' });
     return b;

@@ -104,7 +104,20 @@ async function main() {
 
   if (comando === 'worker') {
     const b = await boss(ctx.config.databaseUrl);
+    // Busca cancelada no painel: as empresas que ainda estão na fila são puladas (status consultado no máx. a cada 15 s)
+    const statusBusca = new Map<string, { status: string; em: number }>();
+    const cancelada = async (buscaId: string | null) => {
+      if (!buscaId) return false;
+      const c = statusBusca.get(buscaId);
+      if (c && Date.now() - c.em < 15_000) return c.status === 'cancelada';
+      try {
+        const { status } = await ctx.central.obterBusca(buscaId);
+        statusBusca.set(buscaId, { status, em: Date.now() });
+        return status === 'cancelada';
+      } catch { return false; }
+    };
     await b.work<{ busca_id: string }>(FILA_PLANEJAR, async ([job]) => {
+      if (await cancelada(job!.data.busca_id)) return log(`busca ${job!.data.busca_id} cancelada antes de começar`);
       const jobs = await planejarBusca(ctx, job!.data.busca_id);
       for (const j of jobs) {
         await b.send(FILA_VERIFICAR, j, { retryLimit: 5, retryBackoff: true, retryDelay: 30, singletonKey: `${j.busca_id}:${j.cnpj}` });
@@ -112,6 +125,7 @@ async function main() {
     });
     const verificar = async ([job]: PgBoss.JobWithMetadata<JobVerificar>[]) => {
       const j = job!;
+      if (await cancelada(j.data.busca_id)) return; // cancelada no painel: pula sem gastar consultas
       try {
         await verificarEmpresa(ctx, j.data);
         await registrarProgresso(ctx, j.data.busca_id, true);

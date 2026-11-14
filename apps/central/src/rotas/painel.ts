@@ -116,6 +116,16 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
        order by b.criado_em desc limit ${q.limite}`;
   });
 
+  /** Cancela uma busca que ainda está na fila ou rodando. O motor pula as empresas que faltam (o que já foi verificado fica). */
+  app.post('/buscas/:id/cancelar', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const [b] = await sql`update busca set status = 'cancelada', concluida_em = now()
+                           where id = ${id} and status in ('planejada', 'executando', 'reprocessar')
+                          returning id, status`;
+    if (!b) return reply.code(409).send({ erro: 'só dá para cancelar busca na fila ou em andamento' });
+    return b;
+  });
+
   /** Pede ao Motor 01 para verificar de novo as empresas da busca (com as regras atuais). */
   app.post('/buscas/:id/reprocessar', async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);

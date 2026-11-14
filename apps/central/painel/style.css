@@ -467,3 +467,5 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .sel-chip button:hover { color: var(--texto); background: var(--hover); }
 .campo .sel-item { color: var(--texto); font-size: 14px; }
 .sel-item input[type=checkbox] { width: 16px; height: 16px; }
+.botao.perigo.armado { background: var(--vermelho); border-color: var(--vermelho); color: #fff; }
+.lista .acoes { flex-wrap: wrap; justify-content: flex-end; }
