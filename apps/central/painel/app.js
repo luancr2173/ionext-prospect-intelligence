@@ -149,6 +149,38 @@ const RESULTADO = {
 const CRITERIO = { presenca_digital: 'Presença digital', empresa_ativa: 'Empresa ativa', contato: 'Contato', tracao: 'Tração', segmento: 'Segmento' };
 const TIPO_OP = { A: 'Primeiro site', B: 'Reformulação', C: 'Melhorias', D: 'Automação' };
 let SEGMENTOS = [];
+const MOTIVOS_PERDA = { preco: 'Preço', sem_interesse: 'Sem interesse', ja_tem_fornecedor: 'Já tem site ou fornecedor', parou_de_responder: 'Parou de responder', momento: 'Não é o momento', outro: 'Outro motivo' };
+
+/** Pergunta o motivo da perda. Resolve com { motivo_perda, motivo_perda_obs } ou null se cancelar. */
+function pedirMotivoPerda(nome) {
+  return new Promise((resolver) => {
+    const motivo = h('select', { id: 'motivo-perda' },
+      h('option', { value: '' }, 'Escolha o motivo…'), Object.entries(MOTIVOS_PERDA).map(([v, t]) => h('option', { value: v }, t)));
+    const obs = h('textarea', { id: 'motivo-obs', rows: '2', maxlength: '500', placeholder: 'Opcional: o que a empresa disse' });
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    const dlg = h('dialog', { class: 'dialogo', 'aria-labelledby': 'dlg-perda-titulo' },
+      h('form', { method: 'dialog', onsubmit: (ev) => {
+        ev.preventDefault();
+        if (!motivo.value) { erro.textContent = 'Escolha um motivo.'; motivo.focus(); return; }
+        fechar({ motivo_perda: motivo.value, motivo_perda_obs: obs.value.trim() || undefined });
+      } },
+        h('h2', { id: 'dlg-perda-titulo' }, 'Por que ', h('em', {}, 'perdeu'), '?'),
+        h('p', { class: 'legenda' }, `${nome}. O motivo ajuda a ver o que mais trava as vendas.`),
+        h('div', { class: 'campo' }, h('label', { for: 'motivo-perda' }, 'Motivo'), motivo),
+        h('div', { class: 'campo' }, h('label', { for: 'motivo-obs' }, 'Detalhe'), obs),
+        erro,
+        h('div', { class: 'acoes' },
+          h('button', { class: 'botao pequeno', type: 'button', onclick: () => fechar(null) }, 'Cancelar'),
+          h('button', { class: 'botao pequeno perigo', type: 'submit' }, 'Marcar como perdida'))));
+    let feito = false;
+    const fechar = (valor) => { if (feito) return; feito = true; dlg.close(); dlg.remove(); resolver(valor); };
+    dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); fechar(null); });
+    document.body.append(dlg);
+    dlg.showModal();
+    motivo.focus();
+  });
+}
+
 const nomeSegmento = (id) => (SEGMENTOS.find((s) => s.id === id) || {}).nome || id || '—';
 
 const CANAIS = { whatsapp: 'Com WhatsApp', fixo: 'Só telefone fixo', email: 'Só e-mail', sem_contato: 'Sem contato' };
@@ -248,7 +280,7 @@ async function telaInicio() {
 
     h('div', { class: 'grade grade-2', style: { marginTop: '16px' } },
       h('div', { class: 'pilha' }, cartaoOptOutRevisar(optouts), cartaoHoje(hoje, respostas), cartaoRespostas(respostas)),
-      cartaoConversao(resumo.funil, resumo.valores)),
+      cartaoConversao(resumo.funil, resumo.valores, resumo.perdas)),
 
     h('div', { class: 'cartao', style: { marginTop: '16px' } },
       h('h2', {}, 'Presença digital'),
@@ -265,8 +297,9 @@ async function telaInicio() {
   );
 }
 
-const MOTIVO = { reuniao: 'Reunião', fechamento: 'Fechamento', parada: 'Parada', aprovar: 'Aprovar', responder: 'Responder' };
+const MOTIVO = { tarefa: 'Tarefa', reuniao: 'Reunião', fechamento: 'Fechamento', parada: 'Parada', aprovar: 'Aprovar', responder: 'Responder' };
 const DICA_MOTIVO = {
+  tarefa: (x) => `${x.titulo} · ${x.dias_atraso > 0 ? `atrasada ${x.dias_atraso} d` : 'para hoje'}`,
   reuniao: (x) => (new Date(x.reuniao_em) < new Date() ? `reunião foi ${diaReuniao(x.reuniao_em)}: registre como foi` : `reunião ${diaReuniao(x.reuniao_em)}`),
   fechamento: (x) => `previsão de fechamento ${x.previsao_fechamento === hojeISO() ? 'é hoje' : `era ${dataCurta(x.previsao_fechamento)}`}${x.proposta_valor ? ` · ${moeda(x.proposta_valor)}` : ''}`,
   parada: (x) => `${STATUS[x.status]} há ${x.dias_na_etapa} d${x.dias_atraso ? ` · ${x.dias_atraso} d além do prazo` : ''}`,
@@ -283,6 +316,7 @@ function cartaoHoje(hoje, respostas) {
   const resumo = [
     nResp && plural(nResp, 'resposta esperando você', 'respostas esperando você'),
     n('reuniao') && plural(n('reuniao'), 'reunião', 'reuniões'),
+    n('tarefa') && plural(n('tarefa'), 'tarefa', 'tarefas'),
     n('fechamento') && plural(n('fechamento'), 'fechamento vencido', 'fechamentos vencidos'),
     n('parada') && plural(n('parada'), 'parada', 'paradas'),
     n('aprovar') && `${n('aprovar')} para aprovar`,
@@ -361,7 +395,7 @@ function cartaoRespostas(respostas) {
 }
 
 /** Conversão entre etapas (Pipedrive/HubSpot): onde as conversas param. */
-function cartaoConversao(f, valores) {
+function cartaoConversao(f, valores, perdas) {
   f = f || {};
   const v = valores || {};
   const passos = [['Abordadas', f.abordadas], ['Respostas', f.responderam], ['Reuniões', f.reunioes], ['Propostas', f.propostas], ['Ganhas', f.ganhas]];
@@ -382,6 +416,8 @@ function cartaoConversao(f, valores) {
         h('span', {}, 'Taxa de ganho ', h('b', {}, fechadas ? `${pct(f.ganhas, fechadas)}%` : '—'), fechadas ? ` (${f.ganhas} de ${fechadas} fechadas)` : ''),
         h('span', {}, 'Em proposta ', h('b', {}, moeda(v.em_proposta || 0))),
         h('span', {}, 'Ganho no mês ', h('b', {}, moeda(v.ganho_mes || 0))),
+        perdas && perdas.length > 0 && h('span', { class: 'perdas' }, 'Perdas: ',
+          perdas.map((x, i) => [i ? ' · ' : '', `${(MOTIVOS_PERDA[x.motivo] || x.motivo).toLowerCase()} `, h('b', {}, x.total)])),
         h('span', { class: 'ajuda' }, 'Conta a etapa atual de cada oportunidade.'))]);
 }
 
@@ -634,7 +670,14 @@ async function telaEmpresas(params) {
       h('span', { class: 'indice mono' }, '(03) — Base'),
       h('h1', {}, 'Empre', h('em', {}, 'sas')),
       h('p', { class: 'legenda' }, `${r.total.toLocaleString('pt-BR')} encontradas${filtros.busca ? ' nesta busca' : ''}, ordenadas por score.`)),
-      filtros.busca && h('a', { class: 'botao pequeno', href: '#/empresas' }, 'Ver todas')),
+      h('div', { class: 'acoes-cabecalho' },
+        filtros.busca && h('a', { class: 'botao pequeno', href: '#/empresas' }, 'Ver todas'),
+        ...(() => {
+          const q = new URLSearchParams(Object.entries(filtros).filter(([k, v]) => v && k !== 'pagina').map(([k, v]) => [k, String(v)]));
+          const link = (formato, rotulo, dica) => { q.set('formato', formato); return h('a', { class: 'botao pequeno', href: `/v1/empresas/exportar?${q}`, download: '', title: dica }, rotulo); };
+          return r.total > 0 ? [link('csv', 'Exportar CSV', 'Planilha (Excel) com a lista filtrada, até 5.000 empresas. Empresas com opt-out ficam de fora.'),
+            link('json', 'JSON', 'Para integrar com outro CRM ou com o Neo.')] : [];
+        })())),
     h('div', { class: 'abas-canal', role: 'tablist', 'aria-label': 'Canal de contato' },
       aba('', 'Todas', totalCanais),
       aba('whatsapp', 'Com WhatsApp', r.canais.whatsapp, 'wa'),
@@ -710,9 +753,15 @@ async function telaFunil(params) {
   };
 
   const mover = async (op, status) => {
+    let extra = {};
+    if (status === 'perdida') {
+      const m = await pedirMotivoPerda(op.nome_fantasia);
+      if (!m) { render(); return; } // cancelou: o cartão volta para onde estava
+      extra = m;
+    }
     if (status === 'aprovada_para_contato' && op.canal !== 'whatsapp') aviso('Sem WhatsApp: aprovada, mas o Neo não vai abordar esta empresa.');
     try {
-      await api('PATCH', `/v1/oportunidades/${op.id}`, { status });
+      await api('PATCH', `/v1/oportunidades/${op.id}`, { status, ...extra });
       if (!(status === 'aprovada_para_contato' && op.canal !== 'whatsapp')) aviso(`Movida para “${STATUS[status]}”.`);
       render();
     } catch (e) { aviso(e.message); }
@@ -745,6 +794,7 @@ async function telaFunil(params) {
       op.etapa === 'reuniao' && op.reuniao_em && h('div', { class: 'card-negocio' }, `Reunião ${diaReuniao(op.reuniao_em)}`),
       ['proposta', 'ganha', 'perdida'].includes(op.etapa) && (op.proposta_valor != null || op.previsao_fechamento) && h('div', { class: 'card-negocio' },
         [op.proposta_valor != null && moeda(op.proposta_valor), op.etapa === 'proposta' && op.previsao_fechamento && `fecha ${dataCurta(op.previsao_fechamento)}`].filter(Boolean).join(' · ')),
+      op.etapa === 'perdida' && op.motivo_perda && h('div', { class: 'card-negocio' }, `Motivo: ${MOTIVOS_PERDA[op.motivo_perda].toLowerCase()}`),
       op.neo_pausado_em ? h('div', { class: 'card-neo assumida' }, 'Conversa com você') : linhaNeo && h('div', { class: 'card-neo' }, linhaNeo),
       h('div', { class: 'dias', title: `Nesta etapa desde ${quando(op.etapa_desde)}` },
         parada(op) ? `Parada · ${op.dias_na_etapa} d` : `Na etapa · ${diasTexto(op.dias_na_etapa)}`),
@@ -842,6 +892,7 @@ async function telaEmpresa(id) {
           f.neo && f.neo.whatsapp ? f.neo.whatsapp.numero : (f.contatos.find((c) => c.tipo === 'telefone') || {}).valor),
         op && h('span', { class: 'etiqueta e-alta' }, STATUS[op.status] || op.status),
         op && op.neo_pausado_em && h('span', { class: 'etiqueta e-alerta', title: `Desde ${quando(op.neo_pausado_em)}` }, 'Conversa com você · Neo pausado'),
+        op && op.status === 'perdida' && op.motivo_perda && h('span', { class: 'etiqueta e-baixa', title: op.motivo_perda_obs || '' }, `Motivo: ${MOTIVOS_PERDA[op.motivo_perda].toLowerCase()}`),
         op && op.dias_na_etapa != null && h('span', { class: 'dias' }, op.dias_na_etapa < 1 ? 'nesta etapa desde hoje' : `nesta etapa há ${op.dias_na_etapa} d`),
         etiquetaClasse(p && p.classificacao),
         op && etiquetaPrioridade(op.prioridade),
@@ -879,6 +930,7 @@ async function telaEmpresa(id) {
         acoes,
         controleNeo(f.neo, op),
         op && cartaoNegocio(op),
+        op && cartaoTarefas(op),
         linhaDoTempo(f, op),
         cartaoNeo(f.neo),
         h('div', { class: 'cartao' },
@@ -979,7 +1031,13 @@ function resumoEvidencia(ev) {
 function cartaoAcoes(op, empresa) {
   const area = h('div');
   const mudar = async (status, msg) => {
-    try { await api('PATCH', `/v1/oportunidades/${op.id}`, { status }); aviso(msg); render(); } catch (e) { aviso(e.message); }
+    let extra = {};
+    if (status === 'perdida') {
+      const m = await pedirMotivoPerda(empresa.nome_fantasia);
+      if (!m) return;
+      extra = m;
+    }
+    try { await api('PATCH', `/v1/oportunidades/${op.id}`, { status, ...extra }); aviso(msg); render(); } catch (e) { aviso(e.message); }
   };
   const confirmarOptOut = () => {
     const tel = empresa.cnpj;
@@ -1011,6 +1069,35 @@ function cartaoAcoes(op, empresa) {
       empresa.cnpj && h('button', { class: 'botao perigo', onclick: confirmarOptOut }, 'Não contatar')),
     h('p', { class: 'ajuda', style: { marginTop: '12px' } }, 'Nada é enviado automaticamente: o Neo só lê empresas aprovadas aqui.'),
     area);
+}
+
+/** Tarefas com data ("ligar terça", "enviar proposta"). As vencidas aparecem no "Para hoje". */
+function cartaoTarefas(op) {
+  const tarefas = op.tarefas || [];
+  const diaMais = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const proxSegunda = () => { const d = new Date(); return diaMais(((8 - d.getDay()) % 7) || 7); };
+  const titulo = h('input', { type: 'text', id: 'tarefa-titulo', maxlength: '200', placeholder: 'Ex.: ligar para a recepção' });
+  const data = h('input', { type: 'date', id: 'tarefa-data', value: diaMais(1) });
+  const atalho = (rotulo, valor) => h('button', { type: 'button', class: 'chip-data', onclick: () => { data.value = valor; titulo.focus(); } }, rotulo);
+  const hoje = hojeISO();
+  const situacao = (t) => t.concluida_em ? 'feita' : t.vence_em < hoje ? 'atrasada' : t.vence_em === hoje ? 'hoje' : '';
+  const acao = async (fn, msg) => { try { await fn(); if (msg) aviso(msg); render(); } catch (e) { aviso(e.message); } };
+  return h('div', { class: 'cartao' },
+    h('h2', {}, 'Tarefas'),
+    tarefas.length === 0 ? h('p', { class: 'legenda' }, 'Nenhuma tarefa. Crie uma para não esquecer o próximo passo.') :
+      h('ul', { class: 'tarefas' }, tarefas.map((t) => h('li', { class: `tarefa ${situacao(t)}` },
+        h('input', { type: 'checkbox', class: 'marcar', checked: !!t.concluida_em, 'aria-label': `Concluir: ${t.titulo}`,
+          onchange: (ev) => acao(() => api('PATCH', `/v1/tarefas/${t.id}`, { concluida: ev.target.checked }), ev.target.checked ? 'Tarefa concluída.' : null) }),
+        h('div', { class: 'tarefa-texto' }, h('div', {}, t.titulo),
+          h('div', { class: 'item-sub' }, situacao(t) === 'atrasada' ? `Atrasada · era ${dataCurta(t.vence_em)}` : situacao(t) === 'hoje' ? 'Hoje' : dataCurta(t.vence_em))),
+        h('button', { class: 'botao-texto', type: 'button', 'aria-label': `Apagar: ${t.titulo}`, title: 'Apagar', onclick: () => acao(() => api('DELETE', `/v1/tarefas/${t.id}`)) }, '×')))),
+    h('form', { class: 'nova-tarefa', onsubmit: (ev) => {
+      ev.preventDefault();
+      if (!titulo.value.trim() || !data.value) { titulo.focus(); return; }
+      acao(() => api('POST', `/v1/oportunidades/${op.id}/tarefas`, { titulo: titulo.value.trim(), vence_em: data.value }), 'Tarefa criada.');
+    } },
+      h('div', { class: 'nova-tarefa-linha' }, titulo, data, h('button', { class: 'botao pequeno', type: 'submit' }, 'Adicionar')),
+      h('div', { class: 'chips-data' }, atalho('Hoje', diaMais(0)), atalho('Amanhã', diaMais(1)), atalho('Em 3 dias', diaMais(3)), atalho('Próxima segunda', proxSegunda()))));
 }
 
 const SOLUCOES = ['Site institucional', 'Landing page', 'Reformulação do site', 'Sistema personalizado', 'Atendimento com IA no WhatsApp', 'Automação comercial'];

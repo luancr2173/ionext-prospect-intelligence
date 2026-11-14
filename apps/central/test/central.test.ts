@@ -392,6 +392,66 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(de_novo.statusCode).toBe(404);
   });
 
+  it('CRM: motivo de perda, tarefas e exportação', async () => {
+    const outra = candidata({
+      nome_fantasia: '=Clínica Fórmula', identificadores: [{ fonte: 'osm', valor: 'node/960' }],
+      endereco: { uf: 'DF', cidade: 'Brasília', bairro: 'Noroeste', cep: '70680-000', lat: -15.74, lng: -47.91 },
+      contatos: [{ tipo: 'telefone', valor: '(61) 99444-3322', publico_comercial: true, evidencia_ref: 'osm1' },
+                 { tipo: 'email', valor: 'contato@formula.com.br', publico_comercial: true, evidencia_ref: 'osm1' }],
+    });
+    const bloqueada = candidata({
+      nome_fantasia: 'Clínica Bloqueada', identificadores: [{ fonte: 'osm', valor: 'node/961' }],
+      endereco: { uf: 'DF', cidade: 'Brasília', bairro: 'Cruzeiro', cep: '70640-000', lat: -15.79, lng: -47.93 },
+      contatos: [{ tipo: 'telefone', valor: '(61) 99333-2211', publico_comercial: true, evidencia_ref: 'osm1' }],
+    });
+    await ingest([outra, bloqueada]);
+    const [o] = await sql`select o.id from oportunidade o join empresa e on e.id = o.empresa_id where e.nome_fantasia = '=Clínica Fórmula'`;
+    const id = o!.id as string;
+    const patch = (payload: Record<string, unknown>) => app.inject({ method: 'PATCH', url: `/v1/oportunidades/${id}`, headers: AUTH, payload });
+
+    // perda exige motivo; anotação numa perdida mantém o motivo; reabrir apaga
+    expect((await patch({ status: 'perdida' })).statusCode).toBe(400);
+    const perdeu = await patch({ status: 'perdida', motivo_perda: 'preco', motivo_perda_obs: 'achou caro' });
+    expect(perdeu.json()).toMatchObject({ status: 'perdida', motivo_perda: 'preco', motivo_perda_obs: 'achou caro' });
+    expect((await patch({ status: 'perdida', observacao: 'liguei de novo' })).json()).toMatchObject({ motivo_perda: 'preco', motivo_perda_obs: 'achou caro' });
+    const resumo = (await app.inject({ method: 'GET', url: '/v1/painel/resumo', headers: AUTH })).json();
+    expect(resumo.perdas).toEqual([{ motivo: 'preco', total: 1 }]);
+    expect((await patch({ status: 'nova' })).json()).toMatchObject({ motivo_perda: null, motivo_perda_obs: null });
+
+    // tarefas: vencida entra no "para hoje"; concluída sai
+    const t = await app.inject({ method: 'POST', url: `/v1/oportunidades/${id}/tarefas`, headers: AUTH,
+      payload: { titulo: 'Ligar para a recepção', vence_em: '2020-01-01' } });
+    expect(t.statusCode).toBe(201);
+    await app.inject({ method: 'POST', url: `/v1/oportunidades/${id}/tarefas`, headers: AUTH, payload: { titulo: 'Futura', vence_em: '2999-01-01' } });
+    let hoje = (await app.inject({ method: 'GET', url: '/v1/painel/hoje', headers: AUTH })).json();
+    const tarefas = hoje.itens.filter((x: { motivo: string }) => x.motivo === 'tarefa');
+    expect(tarefas.map((x: { titulo: string }) => x.titulo)).toEqual(['Ligar para a recepção']);
+    expect(tarefas[0].dias_atraso).toBeGreaterThan(1000);
+    const ficha = (await app.inject({ method: 'GET', url: `/v1/empresas/${(await sql`select empresa_id from oportunidade where id = ${id}`)[0]!.empresa_id}`, headers: AUTH })).json();
+    expect(ficha.oportunidades[0].tarefas.map((x: { titulo: string }) => x.titulo)).toEqual(['Ligar para a recepção', 'Futura']);
+    await app.inject({ method: 'PATCH', url: `/v1/tarefas/${t.json().id}`, headers: AUTH, payload: { concluida: true } });
+    hoje = (await app.inject({ method: 'GET', url: '/v1/painel/hoje', headers: AUTH })).json();
+    expect(hoje.itens.filter((x: { motivo: string }) => x.motivo === 'tarefa')).toHaveLength(0);
+    expect((await app.inject({ method: 'DELETE', url: `/v1/tarefas/${t.json().id}`, headers: AUTH })).statusCode).toBe(204);
+
+    // exportação: opt-out fora, CSV para Excel (BOM, ";", fórmula neutralizada) e JSON
+    await app.inject({ method: 'POST', url: '/v1/opt-out', headers: AUTH, payload: { chave: 'telefone', valor: '(61) 99333-2211' } });
+    const csv = await app.inject({ method: 'GET', url: '/v1/empresas/exportar?formato=csv&uf=DF', headers: AUTH });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers['content-type']).toContain('text/csv');
+    expect(csv.headers['content-disposition']).toMatch(/ionext-empresas-\d{4}-\d{2}-\d{2}\.csv/);
+    expect(csv.body.charCodeAt(0)).toBe(0xfeff);
+    const [cab, ...dados] = csv.body.slice(1).trim().split('\r\n');
+    expect(cab!.split(';')).toContain('telefone_principal');
+    expect(dados).toHaveLength(1);
+    expect(dados[0]!.startsWith("'=Clínica Fórmula;")).toBe(true);
+    expect(dados[0]).toContain('(61) 99444-3322');
+    expect(dados[0]).toContain('contato@formula.com.br');
+    const json = (await app.inject({ method: 'GET', url: '/v1/empresas/exportar?formato=json', headers: AUTH })).json();
+    expect(json.total).toBe(1);
+    expect(json.empresas[0]).toMatchObject({ nome_fantasia: '=Clínica Fórmula', telefone_principal: '+5561994443322' });
+  });
+
   it('não deixa criar a mesma busca enquanto outra igual está ativa', async () => {
     const corpo = { uf: 'DF', cidade: 'Taguatinga', segmento: 'clinica_medica', bairros: ['Centro', 'Norte'] };
     const a = await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH, payload: corpo });

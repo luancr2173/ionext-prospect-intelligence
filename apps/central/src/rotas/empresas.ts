@@ -51,12 +51,9 @@ export function canalLateral(sql: Sql) {
     ) ch on true`;
 }
 
-export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
-  app.get('/empresas', async (req) => {
-    const f = Filtros.parse(req.query);
-    const offset = (f.pagina - 1) * f.limite;
-    // filtros sem o canal: as contagens por canal (abas do painel) respeitam os outros filtros
-    const base = sql`
+/** Lista de empresas com os filtros da tela Empresas (sem o canal, que é aplicado depois). */
+function consultaBase(sql: Sql, f: z.infer<typeof Filtros>) {
+  return sql`
       select e.id, e.nome_fantasia, e.cnpj, e.segmento, e.uf, e.cidade, e.bairro,
              p.classificacao, p.confiabilidade, p.url_site, o.id as oportunidade_id, o.tipo as oportunidade,
              o.lead_score, o.prioridade, o.status, ch.canal, ch.telefone
@@ -76,6 +73,14 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
          ${f.status ? sql`and o.status = ${f.status}` : sql``}
          ${f.busca ? sql`and exists (select 1 from busca_resultado br where br.busca_id = ${f.busca} and br.empresa_id = e.id)` : sql``}
          ${f.q ? sql`and (e.nome_normalizado like ${'%' + f.q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '%'} or e.cnpj = ${f.q.replace(/[^0-9A-Za-z]/g, '').toUpperCase()})` : sql``}`;
+}
+
+export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
+  app.get('/empresas', async (req) => {
+    const f = Filtros.parse(req.query);
+    const offset = (f.pagina - 1) * f.limite;
+    // filtros sem o canal: as contagens por canal (abas do painel) respeitam os outros filtros
+    const base = consultaBase(sql, f);
     const [linhas, contagens] = await Promise.all([
       sql`
         with base as (${base})
@@ -91,6 +96,40 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
       canais: Object.fromEntries(contagens.map((c) => [c.canal as string, c.total as number])),
       itens: linhas.map(({ total: _t, ...r }) => r),
     };
+  });
+
+  /**
+   * Exporta a lista filtrada (mesmos filtros da tela Empresas) em CSV (Excel, separador ";") ou JSON,
+   * para planilhas e outros CRMs. Empresas com opt-out ficam de fora; só contatos marcados como comerciais.
+   */
+  app.get('/empresas/exportar', async (req, reply) => {
+    const { formato, ...resto } = z.object({ formato: z.enum(['csv', 'json']).default('csv') }).passthrough().parse(req.query);
+    const f = Filtros.parse(resto);
+    const linhas = await sql`
+      with base as (${consultaBase(sql, f)})
+      select b.nome_fantasia, e.razao_social, b.cnpj, b.segmento, b.uf, b.cidade, b.bairro, e.endereco, e.cep,
+             b.classificacao, b.url_site, b.oportunidade, b.lead_score, b.prioridade, b.status, b.canal,
+             b.telefone as telefone_principal,
+             (select string_agg(distinct c.valor, ' | ') from contato c where c.empresa_id = b.id and c.publico_comercial and c.tipo = 'email') as email,
+             (select string_agg(distinct c.valor, ' | ') from contato c where c.empresa_id = b.id and c.publico_comercial and c.tipo = 'instagram') as instagram,
+             (select string_agg(distinct c.valor, ' | ') from contato c where c.empresa_id = b.id and c.publico_comercial and c.tipo = 'facebook') as facebook,
+             o.reuniao_em, o.proposta_valor::float as proposta_valor, o.proposta_solucao, o.previsao_fechamento::text as previsao_fechamento,
+             o.motivo_perda, b.id as empresa_id
+        from base b
+        join empresa e on e.id = b.id
+        left join oportunidade o on o.id = b.oportunidade_id
+       where not neo._bloqueada(b.id)
+         ${f.canal ? sql`and b.canal = ${f.canal}` : sql``}
+       order by b.lead_score desc nulls last, b.nome_fantasia
+       limit 5000`;
+    const dia = new Date().toISOString().slice(0, 10);
+    if (formato === 'json') {
+      return reply.header('content-disposition', `attachment; filename="ionext-empresas-${dia}.json"`)
+        .type('application/json; charset=utf-8').send(JSON.stringify({ exportado_em: new Date().toISOString(), total: linhas.length, empresas: linhas }, null, 2));
+    }
+    return reply.header('content-disposition', `attachment; filename="ionext-empresas-${dia}.csv"`)
+      .type('text/csv; charset=utf-8')
+      .send(paraCsv(linhas.map((l) => ({ ...l, telefone_principal: telefoneLegivel(l.telefone_principal as string | null) })) as Record<string, unknown>[]));
   });
 
   app.get('/empresas/:id', async (req, reply) => {
@@ -111,7 +150,10 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
                    coalesce((select json_agg(x order by x.em desc) from oportunidade_etapa x
                                 where x.oportunidade_id = o.id and x.de is not null), '[]') as etapas,
                    floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
-                   o.proposta_valor::float as proposta_valor, o.previsao_fechamento::text as previsao_fechamento
+                   o.proposta_valor::float as proposta_valor, o.previsao_fechamento::text as previsao_fechamento,
+                   coalesce((select json_agg(json_build_object('id', t.id, 'titulo', t.titulo, 'vence_em', t.vence_em::text,
+                                                               'concluida_em', t.concluida_em) order by t.concluida_em nulls first, t.vence_em)
+                               from tarefa t where t.oportunidade_id = o.id), '[]') as tarefas
             from oportunidade o where o.empresa_id = ${id}`,
       sql`select * from revisao_merge where status = 'pendente' and (empresa_a = ${id} or empresa_b = ${id})`,
       sql`select numero, fonte from neo._whatsapp(${id})`,
@@ -188,4 +230,23 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
     if (!resultado) return reply.code(404).send({ erro: 'empresa não encontrada' });
     return reply.code(201).send(resultado);
   });
+}
+
+/** "+5561998887766" → "(61) 99888-7766" (o Excel transformaria o número em notação científica). */
+function telefoneLegivel(t: string | null): string | null {
+  const m = /^\+55(\d{2})(\d{4,5})(\d{4})$/.exec(t ?? '');
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : t;
+}
+
+/** CSV para o Excel brasileiro: BOM UTF-8, separador ";", aspas escapadas e proteção contra fórmula (=, +, -, @). */
+export function paraCsv(linhas: Record<string, unknown>[]): string {
+  if (linhas.length === 0) return '\uFEFFsem resultados\r\n';
+  const colunas = Object.keys(linhas[0]!);
+  const celula = (v: unknown) => {
+    if (v == null) return '';
+    let t = v instanceof Date ? v.toISOString() : typeof v === 'number' ? String(v).replace('.', ',') : String(v);
+    if (/^[=@\t\r]/.test(t) || /^[+-]\D/.test(t)) t = `'${t}`;
+    return /[";\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  return '\uFEFF' + [colunas.join(';'), ...linhas.map((l) => colunas.map((c) => celula(l[c])).join(';'))].join('\r\n') + '\r\n';
 }

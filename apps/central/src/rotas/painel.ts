@@ -4,6 +4,13 @@ import { z } from 'zod';
 import type { Sql } from '../db.ts';
 import { canalLateral } from './empresas.ts';
 
+/** Motivos de perda (lista curta, para dar para comparar) e como aparecem para as pessoas. */
+export const MOTIVOS_PERDA = ['preco', 'sem_interesse', 'ja_tem_fornecedor', 'parou_de_responder', 'momento', 'outro'] as const;
+export const ROTULO_MOTIVO: Record<(typeof MOTIVOS_PERDA)[number], string> = {
+  preco: 'preço', sem_interesse: 'sem interesse', ja_tem_fornecedor: 'já tem site ou fornecedor',
+  parou_de_responder: 'parou de responder', momento: 'não é o momento', outro: 'outro motivo',
+};
+
 /** Dias numa etapa até a oportunidade ser considerada parada (destaque no funil e na lista "Hoje"). */
 export const PRAZO_ETAPA = { aprovada_para_contato: 3, abordada: 7, respondeu: 1, reuniao: 7, proposta: 10 } as const;
 
@@ -75,7 +82,9 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
              coalesce(sum(proposta_valor) filter (where status = 'ganha'
                and etapa_desde >= date_trunc('month', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo'), 0)::float as ganho_mes
         from oportunidade`;
-    return { totais, classificacoes, prioridades, motores, funil, valores };
+    const perdas = await sql`select motivo_perda as motivo, count(*)::int as total from oportunidade
+                              where status = 'perdida' and motivo_perda is not null group by 1 order by 2 desc`;
+    return { totais, classificacoes, prioridades, motores, funil, valores, perdas };
   });
 
   /**
@@ -161,6 +170,16 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
                 reuniao_em asc nulls last, previsao_fechamento asc nulls last,
                 dias_na_etapa - coalesce(prazo, 0) desc
        limit 60`;
+    const tarefas = await sql`
+      select o.id, o.status, o.lead_score, o.prioridade, t.id as tarefa_id, t.titulo, t.vence_em::text as vence_em,
+             ((now() at time zone 'America/Sao_Paulo')::date - t.vence_em)::int as dias_atraso,
+             e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone, 'tarefa' as motivo
+        from tarefa t
+        join oportunidade o on o.id = t.oportunidade_id
+        join empresa e on e.id = o.empresa_id
+        ${canalLateral(sql)}
+       where t.concluida_em is null and t.vence_em <= (now() at time zone 'America/Sao_Paulo')::date
+       order by t.vence_em, t.criada_em limit 30`;
     const aprovar = await sql`
       select o.id, o.status, o.lead_score, o.prioridade, o.etapa_desde, 0 as dias_na_etapa, 0 as dias_atraso,
              e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone, 'aprovar' as motivo
@@ -169,7 +188,10 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
         ${canalLateral(sql)}
        where o.status in ('nova','revisada') and ch.canal = 'whatsapp' and o.prioridade = 'alta'
        order by o.lead_score desc nulls last limit 5`;
-    return { prazos: PRAZO_ETAPA, itens: [...itens, ...aprovar] };
+    // ordem: reunião > tarefa vencida > fechamento > parada > aprovar
+    const reunioes = itens.filter((x) => x.motivo === 'reuniao');
+    const demais = itens.filter((x) => x.motivo !== 'reuniao');
+    return { prazos: PRAZO_ETAPA, itens: [...reunioes, ...tarefas, ...demais, ...aprovar] };
   });
 
   app.get('/buscas', async (req) => {
@@ -236,7 +258,7 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
       with ops as (
         select o.id, o.status, o.tipo, o.lead_score, o.prioridade, o.atualizado_em, o.etapa_desde,
                o.reuniao_em, o.proposta_valor::float as proposta_valor, o.previsao_fechamento::text as previsao_fechamento,
-               o.neo_pausado_em,
+               o.neo_pausado_em, o.motivo_perda,
                floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
                case when o.status in ('nova', 'revisada') then 'revisar' else o.status end as etapa,
                e.id as empresa_id, e.nome_fantasia, e.bairro, e.segmento, ch.canal, ch.telefone,
@@ -354,21 +376,63 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
     return o;
   });
 
-  /** Mudança de status comercial feita por uma pessoa (aprovar para o Neo, descartar...). */
+  /**
+   * Mudança de status comercial feita por uma pessoa (aprovar para o Neo, descartar...).
+   * Ao marcar como perdida, o motivo é obrigatório; ao sair de "perdida", o motivo é apagado.
+   */
   app.patch('/oportunidades/:id', async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const p = z.object({
       status: z.enum(['nova', 'revisada', 'aprovada_para_contato', 'abordada', 'respondeu', 'reuniao', 'proposta', 'ganha', 'perdida', 'descartada', 'obsoleta']),
       observacao: z.string().max(1000).optional(),
+      motivo_perda: z.enum(MOTIVOS_PERDA).optional(),
+      motivo_perda_obs: z.string().trim().max(500).optional(),
     }).parse(req.body);
-    const [o] = await sql`update oportunidade set status = ${p.status}, responsavel = ${req.cliente}
-                          where id = ${id} returning id, status, empresa_id`;
-    if (!o) return reply.code(404).send({ erro: 'oportunidade não encontrada' });
+    const [atual] = await sql`select status, motivo_perda from oportunidade where id = ${id}`;
+    if (!atual) return reply.code(404).send({ erro: 'oportunidade não encontrada' });
+    const motivo = p.status === 'perdida' ? (p.motivo_perda ?? atual.motivo_perda ?? null) : null;
+    if (p.status === 'perdida' && !motivo) return reply.code(400).send({ erro: 'Informe o motivo da perda.' });
+    const obs = p.status === 'perdida' ? (p.motivo_perda !== undefined ? (p.motivo_perda_obs || null) : undefined) : null;
+    const [o] = await sql`update oportunidade set status = ${p.status}, responsavel = ${req.cliente}, motivo_perda = ${motivo}
+                            ${obs !== undefined ? sql`, motivo_perda_obs = ${obs}` : sql``}
+                          where id = ${id} returning id, status, empresa_id, motivo_perda, motivo_perda_obs`;
     if (p.observacao) {
       await sql`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por)
                 values (${id}, 'outro', 'saida', ${p.observacao}, ${req.cliente})`;
     }
+    if (p.status === 'perdida' && p.motivo_perda && atual.status !== 'perdida') {
+      await sql`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por)
+                values (${id}, 'outro', 'saida', ${`Perdida: ${ROTULO_MOTIVO[p.motivo_perda]}${p.motivo_perda_obs ? ` (${p.motivo_perda_obs})` : ''}`}, ${req.cliente})`;
+    }
     return o;
+  });
+
+  /** Tarefas da oportunidade ("ligar terça", "enviar proposta"). Entram no "Para hoje" quando vencem. */
+  app.post('/oportunidades/:id/tarefas', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const p = z.object({ titulo: z.string().trim().min(1).max(200), vence_em: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(req.body);
+    const [op] = await sql`select id from oportunidade where id = ${id}`;
+    if (!op) return reply.code(404).send({ erro: 'oportunidade não encontrada' });
+    const [t] = await sql`insert into tarefa (oportunidade_id, titulo, vence_em, criada_por)
+                          values (${id}, ${p.titulo}, ${p.vence_em}, ${req.cliente})
+                          returning id, titulo, vence_em::text as vence_em, concluida_em, criada_em`;
+    return reply.code(201).send(t);
+  });
+
+  app.patch('/tarefas/:id', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const p = z.object({ concluida: z.boolean() }).parse(req.body);
+    const [t] = await sql`update tarefa set concluida_em = ${p.concluida ? sql`now()` : null} where id = ${id}
+                          returning id, titulo, vence_em::text as vence_em, concluida_em`;
+    if (!t) return reply.code(404).send({ erro: 'tarefa não encontrada' });
+    return t;
+  });
+
+  app.delete('/tarefas/:id', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const r = await sql`delete from tarefa where id = ${id} returning id`;
+    if (!r.length) return reply.code(404).send({ erro: 'tarefa não encontrada' });
+    return reply.code(204).send();
   });
 
   /** Sinal de vida e métricas de um motor (o painel mostra se está rodando, cota de busca web etc.). */

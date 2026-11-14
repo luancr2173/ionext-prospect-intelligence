@@ -510,3 +510,30 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .contador-ambar { color: var(--ambar); background: var(--ambar-fundo); border-color: color-mix(in srgb, var(--ambar) 45%, transparent); }
 .revisar-optout { border-color: color-mix(in srgb, var(--ambar) 45%, var(--linha)); }
 @media (max-width: 700px) { .controle-neo { flex-direction: column; align-items: flex-start; } }
+
+/* ---------------------------------------------------------------- CRM: motivo de perda, tarefas, exportação */
+.dialogo { border: 1px solid var(--linha-forte); border-radius: 18px; background: var(--superficie); color: var(--texto);
+  padding: 26px 26px 22px; width: min(440px, calc(100vw - 32px)); box-shadow: var(--sombra); }
+.dialogo::backdrop { background: rgb(0 0 0 / .45); backdrop-filter: blur(3px); }
+.dialogo form { display: grid; gap: 14px; }
+.dialogo h2 { margin: 0; font-size: 22px; }
+.dialogo .legenda { margin: -6px 0 0; }
+.dialogo .acoes { justify-content: flex-end; }
+@media (prefers-reduced-motion: no-preference) { .dialogo[open] { animation: entrar .28s var(--suave-saida); } }
+.razao-tarefa { color: var(--indigo, var(--azul)); border-color: var(--azul-borda); background: var(--azul-fundo); }
+.tarefas { list-style: none; margin: 0 0 14px; padding: 0; display: grid; }
+.tarefa { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--linha); }
+.tarefa:first-child { border-top: 0; padding-top: 0; }
+.tarefa.feita .tarefa-texto > div:first-child { text-decoration: line-through; color: var(--apagado); }
+.tarefa.atrasada .item-sub { color: var(--vermelho); }
+.tarefa.hoje .item-sub { color: var(--azul); font-weight: 600; }
+.tarefa .botao-texto { font-size: 18px; line-height: 1; padding: 2px 6px; color: var(--apagado); }
+.tarefa .botao-texto:hover { color: var(--vermelho); }
+.nova-tarefa { display: grid; gap: 8px; }
+.nova-tarefa-linha { display: grid; grid-template-columns: minmax(0, 1fr) 150px auto; gap: 8px; align-items: center; }
+.chips-data { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-data { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--linha-forte); background: none; color: var(--suave); cursor: pointer; }
+.chip-data:hover { color: var(--texto); border-color: var(--azul); }
+.acoes-cabecalho { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.perdas { flex-basis: 100%; }
+@media (max-width: 700px) { .nova-tarefa-linha { grid-template-columns: 1fr 1fr; } .nova-tarefa-linha input[type=text] { grid-column: 1 / -1; } }
