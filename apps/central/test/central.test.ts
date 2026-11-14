@@ -276,13 +276,77 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(funil2.etapas.proposta.itens[0].dias_na_etapa).toBe(12);
     expect(funil2.prazos.proposta).toBe(10);
     const hoje = (await app.inject({ method: 'GET', url: '/v1/painel/hoje', headers: AUTH })).json();
-    expect(hoje.itens.map((x: { motivo: string }) => x.motivo).sort()).toEqual(['parada', 'responder']);
+    expect(hoje.itens.map((x: { motivo: string }) => x.motivo)).toEqual(['parada']);
     const resumo = (await app.inject({ method: 'GET', url: '/v1/painel/resumo', headers: AUTH })).json();
     expect(resumo.funil).toMatchObject({ abordadas: 2, responderam: 2, propostas: 1, ganhas: 0 });
     // mudar algo que não é o status não reinicia o relógio da etapa
     await sql`update oportunidade set lead_score = 55 where id = ${ids[1]}`;
     const [o] = await sql`select floor(extract(epoch from now() - etapa_desde) / 86400)::int as d from oportunidade where id = ${ids[1]}`;
     expect(o!.d).toBe(12);
+  });
+
+  it('CRM: caixa de respostas, "para hoje" por urgência e valor do negócio', async () => {
+    const outra = candidata({
+      nome_fantasia: 'Clínica Dois', identificadores: [{ fonte: 'osm', valor: 'node/902' }],
+      endereco: { uf: 'DF', cidade: 'Brasília', bairro: 'Lago Sul', cep: '71600-000', lat: -15.84, lng: -47.87 },
+      contatos: [{ tipo: 'telefone', valor: '(61) 99877-6655', publico_comercial: true, evidencia_ref: 'osm1' }],
+    });
+    const terceira = candidata({
+      nome_fantasia: 'Clínica Três', identificadores: [{ fonte: 'osm', valor: 'node/903' }],
+      endereco: { uf: 'DF', cidade: 'Brasília', bairro: 'Cruzeiro', cep: '70640-000', lat: -15.79, lng: -47.93 },
+      contatos: [{ tipo: 'telefone', valor: '(61) 99666-5544', publico_comercial: true, evidencia_ref: 'osm1' }],
+    });
+    await ingest([candidata(), outra, terceira]);
+    const ops = await sql`select o.id, e.nome_fantasia from oportunidade o join empresa e on e.id = o.empresa_id order by e.nome_fantasia`;
+    const id = (nome: string) => ops.find((o) => o.nome_fantasia === nome)!.id as string;
+    const [a, b, c] = [id('Clínica Dois'), id('Clínica Três'), id('Clínica Sorriso Feliz')];
+    const mensagem = (op: string, minutos: number, texto: string) => sql`
+      insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por, registrado_em)
+      values (${op}, 'whatsapp', 'entrada', ${texto}, 'neo', now() - make_interval(mins => ${minutos}))`;
+    const respostas = async () => (await app.inject({ method: 'GET', url: '/v1/painel/respostas', headers: AUTH })).json().itens;
+
+    await sql`update oportunidade set status = 'respondeu' where id in (${a}, ${b})`;
+    await mensagem(a, 30, 'Oi, quanto custa um site?');
+    await mensagem(b, 90, 'Quem fala?');
+    await mensagem(b, 80, 'Pode mandar o portfólio');
+    let caixa = await respostas();
+    expect(caixa.map((x: { nome_fantasia: string }) => x.nome_fantasia)).toEqual(['Clínica Três', 'Clínica Dois']); // quem espera mais vem antes
+    expect(caixa[0]).toMatchObject({ ultima_mensagem: 'Pode mandar o portfólio', novas: 2, canal: 'whatsapp' });
+
+    // "já vi" tira da caixa até chegar mensagem nova; anotação de uma pessoa também
+    await app.inject({ method: 'POST', url: `/v1/oportunidades/${b}/respostas-vistas`, headers: AUTH });
+    await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${a}`, headers: AUTH, payload: { status: 'respondeu', observacao: 'Liguei e expliquei os planos' } });
+    expect(await respostas()).toEqual([]);
+    await mensagem(b, 0, 'Pode ser terça?');
+    caixa = await respostas();
+    expect(caixa).toHaveLength(1);
+    expect(caixa[0]).toMatchObject({ id: b, novas: 1 });
+
+    // valor e datas do negócio
+    const ruim = await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${a}/negocio`, headers: AUTH, payload: { proposta_valor: -5 } });
+    expect(ruim.statusCode).toBe(400);
+    const reuniao = new Date(Date.now() + 3 * 3600_000).toISOString();
+    await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${a}`, headers: AUTH, payload: { status: 'reuniao' } });
+    await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${a}/negocio`, headers: AUTH, payload: { reuniao_em: reuniao } });
+    await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${c}`, headers: AUTH, payload: { status: 'proposta' } });
+    const neg = await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${c}/negocio`, headers: AUTH,
+      payload: { proposta_valor: 2500, proposta_solucao: 'Site institucional', previsao_fechamento: '2020-01-10' } });
+    expect(neg.statusCode).toBe(200);
+    expect(neg.json()).toMatchObject({ proposta_valor: 2500, proposta_solucao: 'Site institucional', previsao_fechamento: '2020-01-10' });
+    await sql`update oportunidade set status = 'aprovada_para_contato' where id = ${b}`;
+    await sql`update oportunidade set etapa_desde = now() - interval '9 days' where id = ${b}`;
+
+    const hoje = (await app.inject({ method: 'GET', url: '/v1/painel/hoje', headers: AUTH })).json();
+    expect(hoje.itens.map((x: { motivo: string }) => x.motivo)).toEqual(['reuniao', 'fechamento', 'parada']);
+    expect(hoje.itens[2]).toMatchObject({ id: b, dias_atraso: 6 });
+
+    const ficha = (await app.inject({ method: 'GET', url: `/v1/empresas/${(await sql`select empresa_id from oportunidade where id = ${c}`)[0]!.empresa_id}`, headers: AUTH })).json();
+    expect(ficha.oportunidades[0]).toMatchObject({ proposta_valor: 2500, previsao_fechamento: '2020-01-10' });
+    const funil = (await app.inject({ method: 'GET', url: '/v1/pipeline', headers: AUTH })).json();
+    expect(funil.valores.proposta).toEqual({ valor: 2500, com_valor: 1 });
+    await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${c}`, headers: AUTH, payload: { status: 'ganha' } });
+    const resumo = (await app.inject({ method: 'GET', url: '/v1/painel/resumo', headers: AUTH })).json();
+    expect(resumo.valores).toEqual({ em_proposta: 0, ganho_mes: 2500 });
   });
 
   it('não deixa criar a mesma busca enquanto outra igual está ativa', async () => {

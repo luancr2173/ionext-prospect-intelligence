@@ -69,33 +69,98 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
              count(*) filter (where status = 'ganha')::int as ganhas,
              count(*) filter (where status = 'perdida')::int as perdidas
         from oportunidade`;
-    return { totais, classificacoes, prioridades, motores, funil };
+    // valores: em proposta agora e ganho no mês corrente (etapa_desde = quando virou "ganha")
+    const [valores] = await sql`
+      select coalesce(sum(proposta_valor) filter (where status = 'proposta'), 0)::float as em_proposta,
+             coalesce(sum(proposta_valor) filter (where status = 'ganha'
+               and etapa_desde >= date_trunc('month', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo'), 0)::float as ganho_mes
+        from oportunidade`;
+    return { totais, classificacoes, prioridades, motores, funil, valores };
   });
 
   /**
-   * "O que fazer hoje": respostas esperando a gente, oportunidades paradas na etapa além do prazo
-   * e as melhores com WhatsApp ainda não aprovadas. Prazos em dias por etapa (PRAZO_ETAPA).
+   * Caixa de respostas: conversas cuja última mensagem é da empresa e que ninguém conferiu depois
+   * (nem marcou como vista, nem registrou anotação). A que espera há mais tempo vem primeiro.
+   */
+  app.get('/painel/respostas', async () => {
+    const itens = await sql`
+      select o.id, o.status, o.lead_score, e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone,
+             ult.resumo as ultima_mensagem, ult.registrado_em as recebida_em,
+             (select count(*)::int from interacao i
+               where i.oportunidade_id = o.id and i.direcao = 'entrada'
+                 and i.registrado_em > greatest(coalesce(o.respostas_vistas_em, '-infinity'), coalesce(hum.em, '-infinity'))) as novas
+        from oportunidade o
+        join empresa e on e.id = o.empresa_id
+        join lateral (select i.resumo, i.registrado_em from interacao i
+                       where i.oportunidade_id = o.id and i.direcao = 'entrada'
+                       order by i.registrado_em desc limit 1) ult on true
+        left join lateral (select max(i.registrado_em) as em from interacao i
+                            where i.oportunidade_id = o.id and i.direcao = 'saida' and i.registrado_por <> 'neo') hum on true
+        ${canalLateral(sql)}
+       where o.status in ('abordada', 'respondeu', 'reuniao', 'proposta')
+         and ult.registrado_em > coalesce(o.respostas_vistas_em, '-infinity')
+         and ult.registrado_em > coalesce(hum.em, '-infinity')
+       order by ult.registrado_em asc
+       limit 30`;
+    return { itens };
+  });
+
+  /** "Já vi": tira a conversa da caixa de respostas até chegar uma mensagem nova. */
+  app.post('/oportunidades/:id/respostas-vistas', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const [o] = await sql`update oportunidade set respostas_vistas_em = now() where id = ${id} returning id, respostas_vistas_em`;
+    if (!o) return reply.code(404).send({ erro: 'oportunidade não encontrada' });
+    return o;
+  });
+
+  /**
+   * "O que fazer hoje", por urgência: reunião de hoje/amanhã (ou que já passou sem registro),
+   * proposta com previsão de fechamento vencida, oportunidade parada além do prazo da etapa
+   * e as melhores com WhatsApp ainda não aprovadas. Respostas ficam na caixa de respostas.
    */
   app.get('/painel/hoje', async () => {
     const itens = await sql`
-      select o.id, o.status, o.lead_score, o.prioridade, o.etapa_desde,
-             floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
-             e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone,
-             case when o.status = 'respondeu' then 'responder'
-                  when o.status in ('nova','revisada') then 'aprovar'
-                  else 'parada' end as motivo
-        from oportunidade o
-        join empresa e on e.id = o.empresa_id
-        ${canalLateral(sql)}
-       where o.status = 'respondeu'
-          or (o.status = 'aprovada_para_contato' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.aprovada_para_contato}))
-          or (o.status = 'abordada' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.abordada}))
-          or (o.status = 'reuniao' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.reuniao}))
-          or (o.status = 'proposta' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.proposta}))
-       order by case when o.status = 'respondeu' then 0 else 1 end, o.etapa_desde asc
+      with base as (
+        select o.id, o.status, o.lead_score, o.prioridade, o.etapa_desde, o.reuniao_em,
+               o.previsao_fechamento::text as previsao_fechamento, o.proposta_valor::float as proposta_valor,
+               floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
+               e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone,
+               case
+                 when o.status = 'reuniao' and o.reuniao_em < ((now() at time zone 'America/Sao_Paulo')::date + 2) at time zone 'America/Sao_Paulo'
+                   then 'reuniao'
+                 when o.status = 'proposta' and o.previsao_fechamento <= (now() at time zone 'America/Sao_Paulo')::date
+                   then 'fechamento'
+                 when (o.status = 'aprovada_para_contato' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.aprovada_para_contato}))
+                   or (o.status = 'abordada' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.abordada}))
+                   or (o.status = 'respondeu' and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.respondeu})
+                       and not exists (select 1 from interacao i  -- quem está na caixa de respostas não se repete aqui
+                                        where i.oportunidade_id = o.id and i.direcao = 'entrada'
+                                          and i.registrado_em > coalesce(o.respostas_vistas_em, '-infinity')
+                                          and not exists (select 1 from interacao s where s.oportunidade_id = o.id and s.direcao = 'saida'
+                                                             and s.registrado_por <> 'neo' and s.registrado_em > i.registrado_em)))
+                   or (o.status = 'reuniao' and o.reuniao_em is null and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.reuniao}))
+                   or (o.status = 'proposta' and o.previsao_fechamento is null and o.etapa_desde < now() - make_interval(days => ${PRAZO_ETAPA.proposta}))
+                   then 'parada'
+               end as motivo,
+               case o.status
+                 when 'aprovada_para_contato' then ${PRAZO_ETAPA.aprovada_para_contato}::int
+                 when 'abordada' then ${PRAZO_ETAPA.abordada}::int
+                 when 'respondeu' then ${PRAZO_ETAPA.respondeu}::int
+                 when 'reuniao' then ${PRAZO_ETAPA.reuniao}::int
+                 when 'proposta' then ${PRAZO_ETAPA.proposta}::int
+               end as prazo
+          from oportunidade o
+          join empresa e on e.id = o.empresa_id
+          ${canalLateral(sql)}
+         where o.status in ('aprovada_para_contato', 'abordada', 'respondeu', 'reuniao', 'proposta'))
+      select *, greatest(dias_na_etapa - coalesce(prazo, 0), 0) as dias_atraso
+        from base where motivo is not null
+       order by case motivo when 'reuniao' then 0 when 'fechamento' then 1 else 2 end,
+                reuniao_em asc nulls last, previsao_fechamento asc nulls last,
+                dias_na_etapa - coalesce(prazo, 0) desc
        limit 60`;
     const aprovar = await sql`
-      select o.id, o.status, o.lead_score, o.prioridade, o.etapa_desde, 0 as dias_na_etapa,
+      select o.id, o.status, o.lead_score, o.prioridade, o.etapa_desde, 0 as dias_na_etapa, 0 as dias_atraso,
              e.id as empresa_id, e.nome_fantasia, e.bairro, ch.canal, ch.telefone, 'aprovar' as motivo
         from oportunidade o
         join empresa e on e.id = o.empresa_id
@@ -162,9 +227,13 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
       canal: z.enum(['whatsapp', 'fixo', 'email', 'sem_contato']).optional(),
       por_etapa: z.coerce.number().int().min(1).max(200).default(40),
     }).parse(req.query);
+    const valores = await sql`
+      select status, coalesce(sum(proposta_valor), 0)::float as valor, count(proposta_valor)::int as com_valor
+        from oportunidade where status in ('proposta', 'ganha') group by status`;
     const linhas = await sql`
       with ops as (
         select o.id, o.status, o.tipo, o.lead_score, o.prioridade, o.atualizado_em, o.etapa_desde,
+               o.reuniao_em, o.proposta_valor::float as proposta_valor, o.previsao_fechamento::text as previsao_fechamento,
                floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
                case when o.status in ('nova', 'revisada') then 'revisar' else o.status end as etapa,
                e.id as empresa_id, e.nome_fantasia, e.bairro, e.segmento, ch.canal, ch.telefone,
@@ -190,7 +259,7 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
       etapas[k] ??= { total: total_etapa as number, itens: [] };
       etapas[k].itens.push(r);
     }
-    return { etapas, prazos: PRAZO_ETAPA };
+    return { etapas, prazos: PRAZO_ETAPA, valores: Object.fromEntries(valores.map((v) => [v.status, { valor: v.valor, com_valor: v.com_valor }])) };
   });
 
   /** Mesmo status para várias oportunidades (ex.: aprovar 5 clínicas com WhatsApp de uma vez). */
@@ -204,6 +273,24 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
                                 and status in ('nova', 'revisada', 'aprovada_para_contato', 'descartada')
                               returning id`;
     return { atualizadas: linhas.length };
+  });
+
+  /** Dados do negócio: reunião, proposta (valor e solução) e previsão de fechamento. null apaga o campo. */
+  app.patch('/oportunidades/:id/negocio', async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const p = z.object({
+      reuniao_em: z.string().datetime({ offset: true }).nullable().optional(),
+      proposta_valor: z.number().min(0).max(9_999_999_999).nullable().optional(),
+      proposta_solucao: z.string().trim().max(300).nullable().optional(),
+      previsao_fechamento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    }).strict().parse(req.body);
+    const campos = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, v === '' ? null : v]));
+    if (Object.keys(campos).length === 0) return reply.code(400).send({ erro: 'nada para atualizar' });
+    const [o] = await sql`update oportunidade set ${sql(campos)} where id = ${id}
+                          returning id, status, reuniao_em, proposta_valor::float as proposta_valor, proposta_solucao, previsao_fechamento::text as previsao_fechamento`;
+    if (!o) return reply.code(404).send({ erro: 'oportunidade não encontrada' });
+    return o;
   });
 
   /** Mudança de status comercial feita por uma pessoa (aprovar para o Neo, descartar...). */

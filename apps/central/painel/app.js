@@ -113,6 +113,17 @@ const linkSeguro = (url, texto) => /^https?:\/\//i.test(url || '')
   : (texto || url || '—');
 
 const quando = (iso) => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+const moeda = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: Number(v) % 1 ? 2 : 0 }));
+const dataCurta = (iso) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00` : iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '');
+const horaCurta = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+/** "hoje às 14:00", "amanhã às 9:30", "ontem às 16:00" ou "15/11 às 14:00". */
+const diaReuniao = (iso) => {
+  const d = new Date(iso); const dia = new Date(d); dia.setHours(0, 0, 0, 0);
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const dif = Math.round((dia - hoje) / 86400000);
+  return `${{ 0: 'hoje', 1: 'amanhã', [-1]: 'ontem' }[dif] ?? dataCurta(iso)} às ${horaCurta(iso)}`;
+};
+const hojeISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const cnpjFmt = (c) => c && c.length === 14 ? `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}` : (c || '—');
 
 // ------------------------------------------------------------------ vocabulário
@@ -209,7 +220,8 @@ function telaLogin() {
 }
 
 async function telaInicio() {
-  const [resumo, buscas, hoje] = await Promise.all([atualizarMotor(), api('GET', '/v1/buscas?limite=15'), api('GET', '/v1/painel/hoje')]);
+  const [resumo, buscas, hoje, respostas] = await Promise.all([atualizarMotor(), api('GET', '/v1/buscas?limite=15'),
+    api('GET', '/v1/painel/hoje'), api('GET', '/v1/painel/respostas')]);
   if (!resumo) return;
   const t = resumo.totais;
   const total = resumo.classificacoes.reduce((s, c) => s + c.total, 0);
@@ -234,7 +246,9 @@ async function telaInicio() {
       kpi('Alta prioridade', t.alta_prioridade, 'score 70 ou mais'),
       kpi('Aguardando sua revisão', t.aguardando_revisao, t.aprovadas ? `${t.aprovadas} já aprovadas para o Neo` : 'nenhuma aprovada ainda')),
 
-    h('div', { class: 'grade grade-2', style: { marginTop: '16px' } }, cartaoHoje(hoje), cartaoConversao(resumo.funil)),
+    h('div', { class: 'grade grade-2', style: { marginTop: '16px' } },
+      h('div', { class: 'pilha' }, cartaoHoje(hoje, respostas), cartaoRespostas(respostas)),
+      cartaoConversao(resumo.funil, resumo.valores)),
 
     h('div', { class: 'cartao', style: { marginTop: '16px' } },
       h('h2', {}, 'Presença digital'),
@@ -251,23 +265,32 @@ async function telaInicio() {
   );
 }
 
-const MOTIVO = { responder: 'Responder', parada: 'Parada', aprovar: 'Aprovar' };
+const MOTIVO = { reuniao: 'Reunião', fechamento: 'Fechamento', parada: 'Parada', aprovar: 'Aprovar', responder: 'Responder' };
 const DICA_MOTIVO = {
-  responder: () => 'respondeu — continue a conversa no WhatsApp',
+  reuniao: (x) => (new Date(x.reuniao_em) < new Date() ? `reunião foi ${diaReuniao(x.reuniao_em)}: registre como foi` : `reunião ${diaReuniao(x.reuniao_em)}`),
+  fechamento: (x) => `previsão de fechamento ${x.previsao_fechamento === hojeISO() ? 'é hoje' : `era ${dataCurta(x.previsao_fechamento)}`}${x.proposta_valor ? ` · ${moeda(x.proposta_valor)}` : ''}`,
+  parada: (x) => `${STATUS[x.status]} há ${x.dias_na_etapa} d${x.dias_atraso ? ` · ${x.dias_atraso} d além do prazo` : ''}`,
   aprovar: () => 'alta prioridade com WhatsApp, ainda não aprovada',
-  parada: (x) => `${STATUS[x.status]} há ${x.dias_na_etapa} d sem avançar`,
+  responder: () => 'respondeu: continue a conversa no WhatsApp',
 };
 
-/** "O que fazer hoje": a primeira coisa que o painel mostra (respostas, paradas, melhores para aprovar). */
-function cartaoHoje(hoje) {
+/** "O que fazer hoje", por urgência: reunião, fechamento vencido, parada além do prazo, melhores para aprovar. */
+function cartaoHoje(hoje, respostas) {
   const itens = (hoje && hoje.itens) || [];
+  const nResp = ((respostas && respostas.itens) || []).length;
   const n = (m) => itens.filter((x) => x.motivo === m).length;
+  const plural = (q, um, varios) => `${q} ${q > 1 ? varios : um}`;
+  const resumo = [
+    nResp && plural(nResp, 'resposta esperando você', 'respostas esperando você'),
+    n('reuniao') && plural(n('reuniao'), 'reunião', 'reuniões'),
+    n('fechamento') && plural(n('fechamento'), 'fechamento vencido', 'fechamentos vencidos'),
+    n('parada') && plural(n('parada'), 'parada', 'paradas'),
+    n('aprovar') && `${n('aprovar')} para aprovar`,
+  ].filter(Boolean).join(' · ');
   return h('div', { class: 'cartao' },
     h('h2', {}, 'Para ', h('em', {}, 'hoje')),
-    itens.length === 0 ? h('div', { class: 'hoje-vazio' }, 'Tudo em dia: ninguém esperando resposta e nada parado no funil.') :
-      [h('p', { class: 'legenda', style: { margin: '-6px 0 10px' } },
-        [n('responder') && `${n('responder')} esperando resposta`, n('parada') && `${n('parada')} parada${n('parada') > 1 ? 's' : ''}`,
-          n('aprovar') && `${n('aprovar')} para aprovar`].filter(Boolean).join(' · ')),
+    itens.length === 0 ? h('div', { class: 'hoje-vazio' }, nResp ? `Nada parado no funil. ${resumo}, logo abaixo.` : 'Tudo em dia: nenhuma reunião, nada parado no funil.') :
+      [h('p', { class: 'legenda', style: { margin: '-6px 0 10px' } }, resumo),
       h('div', { class: 'hoje' }, itens.slice(0, 8).map((x) => h('a', { class: 'hoje-item', href: `#/empresa/${x.empresa_id}` },
         h('span', { class: `razao razao-${x.motivo}` }, MOTIVO[x.motivo]),
         h('div', {}, h('div', { class: 'item-titulo' }, x.nome_fantasia),
@@ -276,9 +299,43 @@ function cartaoHoje(hoje) {
       itens.length > 8 && h('a', { class: 'coluna-mais', href: '#/funil' }, `+ ${itens.length - 8} no funil`)]);
 }
 
+/**
+ * Caixa de respostas: conversas em que a última mensagem é da empresa e ninguém conferiu ainda.
+ * Quem espera há mais tempo vem primeiro. "Já vi" tira da caixa até chegar mensagem nova.
+ */
+function cartaoRespostas(respostas) {
+  const itens = (respostas && respostas.itens) || [];
+  const jaVi = (x) => async (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    const linha = ev.currentTarget.closest('.resposta');
+    try {
+      await api('POST', `/v1/oportunidades/${x.id}/respostas-vistas`);
+      if (linha && !semMovimento()) { linha.classList.add('saindo'); await new Promise((r) => setTimeout(r, 260)); }
+      render();
+    } catch (e) { aviso(e.message); }
+  };
+  return h('div', { class: 'cartao caixa-respostas' },
+    h('div', { class: 'titulo-cartao' },
+      h('h2', {}, 'Res', h('em', {}, 'postas')),
+      itens.length > 0 && h('span', { class: 'contador' }, itens.length)),
+    itens.length === 0
+      ? h('div', { class: 'hoje-vazio' }, 'Nenhuma resposta esperando. Quando uma empresa responder o Neo, ela aparece aqui.')
+      : h('div', { class: 'respostas' }, itens.slice(0, 6).map((x) => h('a', { class: 'resposta', href: `#/empresa/${x.empresa_id}` },
+        h('div', { class: 'resposta-topo' },
+          h('span', { class: 'item-titulo' }, x.nome_fantasia),
+          h('span', { class: 'espera', title: `Recebida em ${quando(x.recebida_em)}` }, relativo(x.recebida_em))),
+        h('div', { class: 'resposta-texto' }, x.ultima_mensagem || '(mensagem sem texto)'),
+        h('div', { class: 'resposta-rodape' },
+          h('span', { class: 'item-sub' }, [STATUS[x.status], x.novas > 1 && `${x.novas} mensagens novas`, x.bairro].filter(Boolean).join(' · ')),
+          h('span', { class: 'resposta-acoes' }, chipCanal(x.canal, x.telefone),
+            h('button', { class: 'botao pequeno', type: 'button', title: 'Tira da caixa até chegar uma mensagem nova', onclick: jaVi(x) }, 'Já vi')))))),
+    itens.length > 6 && h('a', { class: 'coluna-mais', href: '#/funil' }, `+ ${itens.length - 6} esperando`));
+}
+
 /** Conversão entre etapas (Pipedrive/HubSpot): onde as conversas param. */
-function cartaoConversao(f) {
+function cartaoConversao(f, valores) {
   f = f || {};
+  const v = valores || {};
   const passos = [['Abordadas', f.abordadas], ['Respostas', f.responderam], ['Reuniões', f.reunioes], ['Propostas', f.propostas], ['Ganhas', f.ganhas]];
   const base = passos[0][1] || 0;
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
@@ -295,6 +352,8 @@ function cartaoConversao(f) {
       h('div', { class: 'rodape-conversao' },
         h('span', {}, 'Taxa de resposta ', h('b', {}, `${pct(f.responderam, f.abordadas)}%`)),
         h('span', {}, 'Taxa de ganho ', h('b', {}, fechadas ? `${pct(f.ganhas, fechadas)}%` : '—'), fechadas ? ` (${f.ganhas} de ${fechadas} fechadas)` : ''),
+        h('span', {}, 'Em proposta ', h('b', {}, moeda(v.em_proposta || 0))),
+        h('span', {}, 'Ganho no mês ', h('b', {}, moeda(v.ganho_mes || 0))),
         h('span', { class: 'ajuda' }, 'Conta a etapa atual de cada oportunidade.'))]);
 }
 
@@ -607,7 +666,12 @@ async function telaFunil(params) {
   atualizarMotor();
 
   const prazos = r.prazos || {};
-  const parada = (op) => prazos[op.etapa] != null && op.dias_na_etapa >= prazos[op.etapa];
+  const parada = (op) => {
+    if (op.etapa === 'reuniao' && op.reuniao_em) return new Date(op.reuniao_em) < Date.now() - 86400000; // reunião passou e ninguém registrou
+    if (op.etapa === 'proposta' && op.previsao_fechamento) return op.previsao_fechamento < hojeISO();
+    return prazos[op.etapa] != null && op.dias_na_etapa >= prazos[op.etapa];
+  };
+  const valores = r.valores || {};
   const diasTexto = (d) => (d < 1 ? 'hoje' : `${d} d`);
   let dobradas = new Set(['perdida']);
   try { const salvo = JSON.parse(localStorage.getItem('ionext-funil-dobradas') || 'null'); if (Array.isArray(salvo)) dobradas = new Set(salvo); } catch { /* padrão */ }
@@ -650,6 +714,9 @@ async function telaFunil(params) {
       h('div', { class: 'card-topo' }, h('span', { class: 'card-nome' }, op.nome_fantasia), h('span', { class: 'score' }, op.lead_score ?? '—')),
       h('div', { class: 'item-sub' }, [op.bairro, TIPO_OP[op.tipo]].filter(Boolean).join(' · ')),
       h('div', { class: 'card-linha' }, chipCanal(op.canal, op.telefone), etiquetaPrioridade(op.prioridade)),
+      op.etapa === 'reuniao' && op.reuniao_em && h('div', { class: 'card-negocio' }, `Reunião ${diaReuniao(op.reuniao_em)}`),
+      ['proposta', 'ganha', 'perdida'].includes(op.etapa) && (op.proposta_valor != null || op.previsao_fechamento) && h('div', { class: 'card-negocio' },
+        [op.proposta_valor != null && moeda(op.proposta_valor), op.etapa === 'proposta' && op.previsao_fechamento && `fecha ${dataCurta(op.previsao_fechamento)}`].filter(Boolean).join(' · ')),
       linhaNeo && h('div', { class: 'card-neo' }, linhaNeo),
       h('div', { class: 'dias', title: `Nesta etapa desde ${quando(op.etapa_desde)}` },
         parada(op) ? `Parada · ${op.dias_na_etapa} d` : `Na etapa · ${diasTexto(op.dias_na_etapa)}`),
@@ -683,6 +750,7 @@ async function telaFunil(params) {
       h('header', {}, h('span', {}, rotulo),
         h('span', { class: 'coluna-acoes' },
           etapa.itens.filter(parada).length > 0 && !dobradas.has(chave) && h('span', { class: 'paradas', title: `Paradas há ${prazos[chave]} dias ou mais` }, `${etapa.itens.filter(parada).length} parada${etapa.itens.filter(parada).length > 1 ? 's' : ''}`),
+          valores[chave] && valores[chave].com_valor > 0 && !dobradas.has(chave) && h('span', { class: 'valor-etapa', title: `Soma de ${valores[chave].com_valor} com valor informado` }, moeda(valores[chave].valor)),
           h('b', {}, etapa.total),
           (chave === 'perdida' || chave === 'ganha') && h('button', { class: 'dobrar', type: 'button', title: dobradas.has(chave) ? 'Mostrar coluna' : 'Recolher coluna',
             'aria-label': dobradas.has(chave) ? `Mostrar ${rotulo}` : `Recolher ${rotulo}`, onclick: (ev) => { ev.stopPropagation(); alternarDobra(chave); } }, dobradas.has(chave) ? '›' : '‹'))),
@@ -780,6 +848,7 @@ async function telaEmpresa(id) {
 
       h('div', { class: 'pilha' },
         acoes,
+        op && cartaoNegocio(op),
         linhaDoTempo(f, op),
         cartaoNeo(f.neo),
         h('div', { class: 'cartao' },
@@ -876,8 +945,8 @@ function cartaoAcoes(op, empresa) {
       op.status === 'nova' && h('button', { class: 'botao', onclick: () => mudar('revisada', 'Marcada como revisada.') }, 'Marcar revisada'),
       op.status === 'aprovada_para_contato' && h('button', { class: 'botao', onclick: () => mudar('revisada', 'Tirada da fila do Neo.') }, 'Tirar da fila do Neo'),
       // depois do contato: etapas do funil
-      ['abordada', 'respondeu'].includes(op.status) && h('button', { class: 'botao azul', onclick: () => mudar('reuniao', 'Reunião marcada.') }, 'Reunião marcada'),
-      ['abordada', 'respondeu', 'reuniao'].includes(op.status) && h('button', { class: op.status === 'reuniao' ? 'botao azul' : 'botao', onclick: () => mudar('proposta', 'Proposta enviada.') }, 'Proposta enviada'),
+      ['abordada', 'respondeu'].includes(op.status) && h('button', { class: 'botao azul', onclick: () => mudar('reuniao', 'Reunião marcada. Informe o dia em “Negócio”.') }, 'Reunião marcada'),
+      ['abordada', 'respondeu', 'reuniao'].includes(op.status) && h('button', { class: op.status === 'reuniao' ? 'botao azul' : 'botao', onclick: () => mudar('proposta', 'Proposta enviada. Informe o valor em “Negócio”.') }, 'Proposta enviada'),
       ['reuniao', 'proposta'].includes(op.status) && h('button', { class: 'botao', onclick: () => mudar('ganha', 'Negócio ganho!') }, 'Ganha'),
       ['abordada', 'respondeu', 'reuniao', 'proposta'].includes(op.status) && h('button', { class: 'botao', onclick: () => mudar('perdida', 'Marcada como perdida.') }, 'Perdida'),
       ['nova', 'revisada', 'aprovada_para_contato'].includes(op.status) && h('button', { class: 'botao', onclick: () => mudar('descartada', 'Descartada.') }, 'Descartar'),
@@ -885,6 +954,52 @@ function cartaoAcoes(op, empresa) {
       empresa.cnpj && h('button', { class: 'botao perigo', onclick: confirmarOptOut }, 'Não contatar')),
     h('p', { class: 'ajuda', style: { marginTop: '12px' } }, 'Nada é enviado automaticamente: o Neo só lê empresas aprovadas aqui.'),
     area);
+}
+
+const SOLUCOES = ['Site institucional', 'Landing page', 'Reformulação do site', 'Sistema personalizado', 'Atendimento com IA no WhatsApp', 'Automação comercial'];
+
+/** Reunião, proposta e previsão de fechamento. Aparece quando a conversa começa ou quando já há algo preenchido. */
+function cartaoNegocio(op) {
+  const temAlgo = op.reuniao_em || op.proposta_valor != null || op.proposta_solucao || op.previsao_fechamento;
+  if (!temAlgo && !['respondeu', 'reuniao', 'proposta', 'ganha', 'perdida'].includes(op.status)) return null;
+  const local = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso); const z = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+  };
+  const reuniao = h('input', { type: 'datetime-local', id: 'neg-reuniao', value: local(op.reuniao_em) });
+  const valor = h('input', { type: 'number', id: 'neg-valor', min: '0', step: '0.01', inputmode: 'decimal', placeholder: 'ex.: 2500', value: op.proposta_valor ?? '' });
+  const solucao = h('input', { type: 'text', id: 'neg-solucao', maxlength: '300', list: 'neg-solucoes', placeholder: 'ex.: Site institucional', value: op.proposta_solucao || '' });
+  const previsao = h('input', { type: 'date', id: 'neg-previsao', value: op.previsao_fechamento || '' });
+  const erro = h('div', { class: 'erro', role: 'alert' });
+  const ganha = op.status === 'ganha';
+  const salvar = h('button', { class: 'botao pequeno primario', type: 'submit' }, 'Salvar');
+  const campo = (rotulo, el, dica) => h('div', { class: 'campo' }, h('label', { for: el.id }, rotulo), el, dica && h('small', { class: 'ajuda' }, dica));
+  return h('div', { class: 'cartao' },
+    h('h2', {}, 'Negócio'),
+    h('form', { class: 'form-negocio', onsubmit: async (ev) => {
+      ev.preventDefault(); erro.textContent = '';
+      const v = valor.value.trim() === '' ? null : Number(valor.value);
+      if (v != null && (!Number.isFinite(v) || v < 0)) { erro.textContent = 'Valor inválido.'; valor.focus(); return; }
+      salvar.disabled = true;
+      try {
+        await api('PATCH', `/v1/oportunidades/${op.id}/negocio`, {
+          reuniao_em: reuniao.value ? new Date(reuniao.value).toISOString() : null,
+          proposta_valor: v,
+          proposta_solucao: solucao.value.trim() || null,
+          previsao_fechamento: previsao.value || null,
+        });
+        aviso('Negócio atualizado.'); render();
+      } catch (e) { erro.textContent = e.message; salvar.disabled = false; }
+    } },
+      h('div', { class: 'grade-campos' },
+        campo('Reunião', reuniao),
+        campo(ganha ? 'Valor fechado (R$)' : 'Valor da proposta (R$)', valor),
+        campo('Solução proposta', solucao),
+        campo('Previsão de fechamento', previsao, ganha ? null : 'Aparece em “Para hoje” quando a data chegar.')),
+      h('datalist', { id: 'neg-solucoes' }, SOLUCOES.map((x) => h('option', { value: x }))),
+      erro,
+      h('div', { class: 'acoes' }, salvar)));
 }
 
 function formVerificacaoManual(empresaId) {
