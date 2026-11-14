@@ -27,5 +27,9 @@ export function lerConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const painelSenha = env.PAINEL_SENHA?.trim() || null;
   if (painelSenha && painelSenha.length < 8) throw new Error('PAINEL_SENHA precisa ter pelo menos 8 caracteres');
+  // Online (COOKIE_SEGURO=1, atrás de HTTPS) o painel fica exposto na internet: senha mais forte
+  if (painelSenha && env.COOKIE_SEGURO === '1' && painelSenha.length < 14) {
+    throw new Error('Com o painel online (COOKIE_SEGURO=1), PAINEL_SENHA precisa ter pelo menos 14 caracteres');
+  }
   return { databaseUrl, port: Number(env.PORT ?? 3333), host: env.HOST || '127.0.0.1', apiKeys, painelSenha };
 }

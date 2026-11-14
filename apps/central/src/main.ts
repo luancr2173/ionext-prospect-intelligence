@@ -6,7 +6,11 @@ import { conectar } from './db.ts';
 carregarEnv();
 const cfg = lerConfig();
 const sql = conectar(cfg.databaseUrl);
-const app = criarApp(sql, cfg.apiKeys, { painelSenha: cfg.painelSenha, cookieSeguro: process.env.COOKIE_SEGURO === '1' });
+const app = criarApp(sql, cfg.apiKeys, {
+  painelSenha: cfg.painelSenha,
+  cookieSeguro: process.env.COOKIE_SEGURO === '1',
+  trustProxy: process.env.TRUST_PROXY === '1', // atrás do proxy HTTPS da hospedagem
+});
 
 const parar = async () => {
   await app.close();

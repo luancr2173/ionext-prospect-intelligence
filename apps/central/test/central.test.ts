@@ -344,6 +344,18 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     await sql`delete from receita.estabelecimento where cnpj like '99000000%'`;
   });
 
+  it('bloqueia o IP depois de 5 senhas erradas', async () => {
+    const { criarLimitadorLogin } = await import('../src/app.ts');
+    const l = criarLimitadorLogin(5, 60_000);
+    for (let i = 0; i < 4; i++) l.errou('1.1.1.1');
+    expect(l.bloqueado('1.1.1.1')).toBe(0);
+    l.errou('1.1.1.1');
+    expect(l.bloqueado('1.1.1.1')).toBeGreaterThan(0);
+    expect(l.bloqueado('2.2.2.2')).toBe(0);
+    l.acertou('1.1.1.1');
+    expect(l.bloqueado('1.1.1.1')).toBe(0);
+  });
+
   it('serve ícone, fontes e tema do painel', async () => {
     const icone = await app.inject({ method: 'GET', url: '/painel/icone.svg' });
     expect(icone.headers['content-type']).toContain('image/svg+xml');

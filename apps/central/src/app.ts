@@ -35,10 +35,37 @@ function procurarChave(chaves: Map<string, string>, recebido: string): string | 
   return null;
 }
 
-export interface OpcoesApp { logger?: boolean; painelSenha?: string | null; cookieSeguro?: boolean }
+export interface OpcoesApp { logger?: boolean; painelSenha?: string | null; cookieSeguro?: boolean; trustProxy?: boolean }
+
+/**
+ * Freio contra adivinhação de senha: 5 erros em 15 min bloqueiam o IP por 15 min.
+ * Em memória (um processo); atrás de proxy, use TRUST_PROXY=1 para ver o IP real.
+ */
+export function criarLimitadorLogin(maxErros = 5, janelaMs = 15 * 60_000) {
+  const erros = new Map<string, { n: number; desde: number; bloqueadoAte: number }>();
+  return {
+    bloqueado(ip: string): number {
+      const e = erros.get(ip);
+      if (!e) return 0;
+      if (e.bloqueadoAte > Date.now()) return Math.ceil((e.bloqueadoAte - Date.now()) / 60_000);
+      if (Date.now() - e.desde > janelaMs) erros.delete(ip);
+      return 0;
+    },
+    errou(ip: string) {
+      const agora = Date.now();
+      const e = erros.get(ip);
+      const atual = e && agora - e.desde <= janelaMs ? e : { n: 0, desde: agora, bloqueadoAte: 0 };
+      atual.n += 1;
+      if (atual.n >= maxErros) atual.bloqueadoAte = agora + janelaMs;
+      erros.set(ip, atual);
+      if (erros.size > 10_000) erros.delete(erros.keys().next().value!); // não cresce sem limite
+    },
+    acertou(ip: string) { erros.delete(ip); },
+  };
+}
 
 export function criarApp(sql: Sql, apiKeys: Map<string, string>, opts: OpcoesApp = {}): FastifyInstance {
-  const app = Fastify({ logger: opts.logger ?? true, bodyLimit: 5 * 1024 * 1024 });
+  const app = Fastify({ logger: opts.logger ?? true, bodyLimit: 5 * 1024 * 1024, trustProxy: !!opts.trustProxy });
   app.decorateRequest('cliente', '');
   const painelSenha = opts.painelSenha ?? null;
 
@@ -49,6 +76,7 @@ export function criarApp(sql: Sql, apiKeys: Map<string, string>, opts: OpcoesApp
     const corpo = await readFile(join(PASTA_PAINEL, arquivo));
     return reply.header('content-type', tipo).header('cache-control', 'no-cache')
       .header('x-content-type-options', 'nosniff').header('referrer-policy', 'no-referrer')
+      .header('strict-transport-security', opts.cookieSeguro ? 'max-age=31536000' : 'max-age=0')
       .header('content-security-policy', "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
       .send(corpo);
   };
@@ -62,13 +90,18 @@ export function criarApp(sql: Sql, apiKeys: Map<string, string>, opts: OpcoesApp
   });
   app.get('/painel/:arquivo', async (req, reply) => servir((req.params as { arquivo: string }).arquivo, reply));
   app.get('/painel/sessao', async (req) => ({ habilitado: !!painelSenha, logado: sessaoValida(req.headers.cookie) }));
+  const limitador = criarLimitadorLogin();
   app.post('/painel/login', async (req, reply) => {
     if (!painelSenha) return reply.code(503).send({ erro: 'painel desligado: defina PAINEL_SENHA no .env' });
+    const minutos = limitador.bloqueado(req.ip);
+    if (minutos) return reply.code(429).send({ erro: `Muitas tentativas. Tente de novo em ${minutos} min.` });
     const { senha } = (req.body ?? {}) as { senha?: string };
     if (typeof senha !== 'string' || !senhaConfere(senha, painelSenha)) {
+      limitador.errou(req.ip);
       await new Promise((r) => setTimeout(r, 600)); // freia tentativa de adivinhar
       return reply.code(401).send({ erro: 'senha incorreta' });
     }
+    limitador.acertou(req.ip);
     return reply.header('set-cookie', criarCookieSessao(!!opts.cookieSeguro)).send({ ok: true });
   });
   app.post('/painel/sair', async (_req, reply) => reply.header('set-cookie', cookieSair()).send({ ok: true }));
