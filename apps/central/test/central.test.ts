@@ -285,6 +285,21 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(o!.d).toBe(12);
   });
 
+  it('não deixa criar a mesma busca enquanto outra igual está ativa', async () => {
+    const corpo = { uf: 'DF', cidade: 'Taguatinga', segmento: 'clinica_medica', bairros: ['Centro', 'Norte'] };
+    const a = await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH, payload: corpo });
+    expect(a.statusCode).toBe(201);
+    const b = await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH,
+      payload: { ...corpo, cidade: 'TAGUATINGA ', bairros: ['norte', 'Centro'], quantidade_desejada: 50 } });
+    expect(b.statusCode).toBe(409);
+    expect(b.json().busca_id).toBe(a.json().id);
+    const outra = await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH, payload: { ...corpo, bairros: ['Sul'] } });
+    expect(outra.statusCode).toBe(201);
+    await app.inject({ method: 'POST', url: `/v1/buscas/${a.json().id}/cancelar`, headers: AUTH });
+    await app.inject({ method: 'POST', url: `/v1/buscas/${outra.json().id}/cancelar`, headers: AUTH });
+    expect((await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH, payload: corpo })).statusCode).toBe(201);
+  });
+
   it('cancela busca em andamento e o motor não a reativa', async () => {
     const criada = (await app.inject({ method: 'POST', url: '/v1/buscas', headers: AUTH,
       payload: { uf: 'DF', cidade: 'Brasília', segmento: 'clinica_odontologica' } })).json();

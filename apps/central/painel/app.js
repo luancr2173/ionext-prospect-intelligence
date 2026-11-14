@@ -364,7 +364,7 @@ function seletorBairros({ segmento, cidade, uf }) {
 
   const desenharResumo = () => {
     resumo.textContent = marcados.size === 0 ? 'Cidade inteira' : marcados.size === 1 ? [...marcados][0] : `${marcados.size} bairros selecionados`;
-    resumo.classList.toggle('vazio', marcados.size === 0);
+    resumo.classList.toggle('sem-selecao', marcados.size === 0);
     chips.replaceChildren(...[...marcados].map((b) => h('span', { class: 'sel-chip' }, b,
       h('button', { type: 'button', 'aria-label': `Remover ${b}`, onclick: () => { marcados.delete(b); desenharTudo(); } }, '×'))));
   };

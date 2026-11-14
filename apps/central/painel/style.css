@@ -438,11 +438,12 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 /* ---------------------------------------------------------------- seletor de bairros (lista suspensa com vários) */
 .seletor { position: relative; }
 .sel-botao { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; cursor: pointer;
-  background: var(--superficie-2); border: 1px solid var(--linha-forte); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: var(--texto);
+  background: var(--superficie-2); border: 1px solid var(--linha); border-radius: 10px; padding: 10px 12px; font-size: inherit; line-height: inherit; color: var(--texto);
   transition: border-color .2s, box-shadow .2s; }
 .sel-botao:hover { border-color: var(--apagado); }
 .seletor.aberto .sel-botao { border-color: var(--azul); box-shadow: 0 0 0 4px var(--azul-fundo); }
-.sel-resumo.vazio { color: var(--suave); }
+.sel-resumo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sel-resumo.sem-selecao { color: var(--suave); }
 .sel-seta { width: 8px; height: 8px; border-right: 1.5px solid var(--suave); border-bottom: 1.5px solid var(--suave); transform: translateY(-2px) rotate(45deg); transition: transform .3s var(--suave-saida); flex: none; }
 .seletor.aberto .sel-seta { transform: translateY(2px) rotate(-135deg); }
 .sel-painel { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20; background: var(--superficie); border: 1px solid var(--linha-forte);
