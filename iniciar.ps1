@@ -27,5 +27,11 @@ Write-Host ""
 Write-Host "IONEXT Prospect Intelligence subindo (Central + Motor 01 + auditoria de sites)..." -ForegroundColor Cyan
 Write-Host "O painel abre sozinho em http://localhost:3333. Para parar: Ctrl+C."
 Write-Host ""
-pnpm install --silent
+# Instala dependências novas (ex.: depois de um git pull). Se falhar, para aqui com a mensagem do pnpm.
+pnpm install
+if ($LASTEXITCODE -ne 0) {
+  Write-Host ""
+  Write-Host "A instalação das dependências falhou (veja a mensagem acima). Feche outras janelas do CRM e rode .\iniciar.ps1 de novo." -ForegroundColor Red
+  exit 1
+}
 pnpm start
