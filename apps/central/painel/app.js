@@ -1289,13 +1289,20 @@ async function telaEmpresa(id) {
     return h('span', { class: `etiqueta ${cls}` }, r.redes && r.redes.length ? `${txt}: ${r.redes.join(', ')}` : txt);
   };
 
-  const acoes = op ? cartaoAcoes(op, e) : h('div', { class: 'cartao' }, h('h2', {}, 'Ações'),
+  const acoes = op ? cartaoAcoes(op, e, f) : h('div', { class: 'cartao' }, h('h2', {}, 'Ações'),
     h('p', { class: 'legenda' }, p && p.classificacao === 'PENDENTE'
       ? 'A verificação está pendente: registre o que você encontrou em “Verificação manual” para concluir.'
       : 'Esta empresa ainda não tem uma oportunidade (por exemplo: tem site e ainda não passou pela auditoria).'));
 
   $app.replaceChildren(
     h('button', { class: 'voltar botao-texto', type: 'button', onclick: () => history.back() }, '← Voltar'),
+    (f.nao_contatar || []).length > 0 && h('div', { class: 'faixa-nc', role: 'note' },
+      ICONE_BLOQUEIO(26),
+      h('div', {},
+        h('strong', {}, 'Não contatar'),
+        h('p', {}, `Registrado em ${quando(f.nao_contatar[0].registrado_em)}${f.nao_contatar[0].motivo ? ` · ${f.nao_contatar[0].motivo}` : ''}.`,
+          ' O Neo não envia mensagens e a empresa não volta em buscas.'),
+        h('p', { class: 'faixa-nc-alvos' }, 'Bloqueado: ', f.nao_contatar.map(rotuloBloqueio).join(' · ')))),
     h('div', { class: 'cabecalho' }, h('div', {},
       h('h1', {}, e.nome_fantasia),
       h('div', { class: 'legenda' }, [e.razao_social, e.cnpj && `CNPJ ${cnpjFmt(e.cnpj)}`, [e.bairro, e.cidade, e.uf].filter(Boolean).join(', ')].filter(Boolean).join(' · ')),
@@ -1441,8 +1448,85 @@ function resumoEvidencia(ev) {
   return JSON.stringify(p).slice(0, 160);
 }
 
-function cartaoAcoes(op, empresa) {
-  const area = h('div');
+
+const ICONE = (d, tam = 22) => {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', String(tam)); svg.setAttribute('height', String(tam));
+  svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round'); svg.setAttribute('aria-hidden', 'true');
+  for (const x of [].concat(d)) { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', x); svg.append(p); }
+  return svg;
+};
+const ICONE_BLOQUEIO = (t) => ICONE(['M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18Z', 'M5.6 5.6l12.8 12.8'], t);
+const ICONE_OK = (t) => ICONE(['M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18Z', 'M8 12.5l2.6 2.6L16 9.5'], t);
+const rotuloBloqueio = (b) => b.chave === 'cnpj' ? `CNPJ ${cnpjFmt(b.valor)}` : b.chave === 'telefone' ? `Telefone ${telFmt(b.valor)}` : b.chave === 'email' ? `E-mail ${b.valor}` : `Domínio ${b.valor}`;
+
+/**
+ * "Não contatar": pede confirmação num diálogo claro e, depois de gravado, mostra o comprovante do que foi
+ * bloqueado. Resolve true se registrou.
+ */
+function confirmarNaoContatar(empresa, contatos) {
+  return new Promise((resolver) => {
+    const alvos = [empresa.cnpj && { chave: 'cnpj', valor: empresa.cnpj },
+      ...contatos.filter((c) => ['telefone', 'whatsapp', 'email'].includes(c.tipo))
+        .map((c) => ({ chave: c.tipo === 'email' ? 'email' : 'telefone', valor: c.valor_normalizado || c.valor }))].filter(Boolean);
+    const unicos = [...new Map(alvos.map((a) => [`${a.chave}:${a.valor}`, a])).values()];
+    const motivo = h('textarea', { id: 'nc-motivo', rows: '2', maxlength: '300', placeholder: 'Opcional. Ex.: respondeu “não tenho interesse, não me mandem mais mensagem”' });
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    const confirmar = h('button', { class: 'botao pequeno perigo armado', type: 'submit' }, 'Sim, não contatar');
+    let registrou = false;
+    const form = h('form', { method: 'dialog', onsubmit: async (ev) => {
+      ev.preventDefault();
+      confirmar.disabled = true; confirmar.textContent = 'Registrando…'; erro.textContent = '';
+      try {
+        const r = await api('POST', `/v1/empresas/${empresa.id}/nao-contatar`, { motivo: motivo.value.trim() || undefined });
+        registrou = true;
+        mostrarComprovante(r);
+      } catch (e) {
+        erro.textContent = e.message; confirmar.disabled = false; confirmar.textContent = 'Sim, não contatar';
+      }
+    } },
+      h('div', { class: 'nc-icone perigo' }, ICONE_BLOQUEIO(30)),
+      h('h2', { id: 'dlg-nc-titulo' }, 'Não contatar ', h('em', {}, empresa.nome_fantasia), '?'),
+      h('p', { class: 'legenda' }, 'Use quando a empresa pediu para não receber mensagens (LGPD). Ao confirmar:'),
+      h('ul', { class: 'nc-efeitos' },
+        h('li', {}, 'o Neo não manda mais nenhuma mensagem e a empresa sai da fila;'),
+        h('li', {}, 'as oportunidades abertas dela são descartadas do funil;'),
+        h('li', {}, 'ela não volta em buscas futuras.')),
+        unicos.length ? h('div', { class: 'nc-alvos' }, h('span', { class: 'kpi-rotulo' }, 'Será bloqueado'),
+        h('ul', {}, unicos.map((a) => h('li', {}, rotuloBloqueio(a)))))
+        : h('p', { class: 'erro' }, 'Esta empresa não tem CNPJ, telefone nem e-mail cadastrados: não há o que bloquear.'),
+      h('div', { class: 'campo' }, h('label', { for: 'nc-motivo' }, 'O que a empresa disse'), motivo),
+      erro,
+      h('div', { class: 'acoes' },
+        h('button', { class: 'botao pequeno', type: 'button', onclick: () => fechar() }, 'Cancelar'),
+        unicos.length ? confirmar : null));
+    const dlg = h('dialog', { class: 'dialogo dialogo-largo dialogo-nc', 'aria-labelledby': 'dlg-nc-titulo' }, form);
+    function mostrarComprovante(r) {
+      dlg.replaceChildren(h('div', { class: 'nc-feito', role: 'status' },
+        h('div', { class: 'nc-icone ok' }, ICONE_OK(34)),
+        h('h2', { id: 'dlg-nc-titulo' }, 'Pronto: ', h('em', {}, 'não contatar'), ' registrado'),
+        h('p', {}, `${r.nome} não receberá mais mensagens da IONEXT.`),
+        h('ul', { class: 'nc-efeitos ok' },
+          h('li', {}, r.bloqueados.length === 1 ? '1 contato bloqueado' : `${r.bloqueados.length} contatos bloqueados`, ': ', r.bloqueados.map(rotuloBloqueio).join(' · ')),
+          h('li', {}, r.oportunidades_descartadas
+            ? `${r.oportunidades_descartadas} oportunidade${r.oportunidades_descartadas === 1 ? '' : 's'} descartada${r.oportunidades_descartadas === 1 ? '' : 's'} — saiu da fila do Neo`
+            : 'Nenhuma oportunidade aberta — já estava fora da fila do Neo'),
+          r.outras_empresas ? h('li', {}, `${r.outras_empresas} outra${r.outras_empresas === 1 ? '' : 's'} empresa${r.outras_empresas === 1 ? '' : 's'} com o mesmo contato também saiu da fila`) : null,
+          h('li', {}, `Registrado em ${quando(new Date().toISOString())} na linha do tempo.`)),
+        h('div', { class: 'acoes' }, h('button', { class: 'botao pequeno azul', type: 'button', onclick: () => fechar(), autofocus: true }, 'Entendi'))));
+      dlg.querySelector('button').focus();
+    }
+    let feito = false;
+    const fechar = () => { if (feito) return; feito = true; dlg.close(); dlg.remove(); resolver(registrou); };
+    dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); fechar(); });
+    document.body.append(dlg);
+    dlg.showModal();
+    motivo.focus();
+  });
+}
+
+function cartaoAcoes(op, empresa, ficha) {
   const mudar = async (status, msg) => {
     let extra = {};
     if (status === 'perdida') {
@@ -1452,17 +1536,14 @@ function cartaoAcoes(op, empresa) {
     }
     try { await api('PATCH', `/v1/oportunidades/${op.id}`, { status, ...extra }); aviso(msg); render(); } catch (e) { aviso(e.message); }
   };
-  const confirmarOptOut = () => {
-    const tel = empresa.cnpj;
-    area.replaceChildren(h('div', { class: 'confirmar' },
-      h('p', { style: { margin: '0 0 10px' } }, 'Registrar que esta empresa não quer ser contatada? Ela sai de todas as filas e não volta em buscas futuras.'),
-      h('div', { class: 'acoes' },
-        h('button', { class: 'botao perigo pequeno', onclick: async () => {
-          try { await api('POST', '/v1/opt-out', { chave: 'cnpj', valor: tel, motivo: 'registrado no painel' }); aviso('Opt-out registrado.'); render(); }
-          catch (e) { aviso(e.message); }
-        } }, 'Confirmar opt-out'),
-        h('button', { class: 'botao pequeno', onclick: () => area.replaceChildren() }, 'Cancelar'))));
+  const bloqueada = (ficha.nao_contatar || []).length > 0;
+  const confirmarOptOut = async () => {
+    if (await confirmarNaoContatar(empresa, ficha.contatos || [])) render();
   };
+  if (bloqueada) {
+    return h('div', { class: 'cartao' }, h('h2', {}, 'Ações'),
+      h('p', { class: 'legenda', style: { margin: 0 } }, 'Empresa marcada como “não contatar”: nenhuma ação de contato disponível.'));
+  }
   return h('div', { class: 'cartao' },
     h('h2', {}, 'Ações'),
     h('p', { class: 'legenda', style: { marginTop: '-6px', marginBottom: '14px' } }, `Status: ${STATUS[op.status] || op.status}`,
@@ -1481,9 +1562,8 @@ function cartaoAcoes(op, empresa) {
       ['abordada', 'respondeu', 'reuniao', 'proposta'].includes(op.status) && h('button', { class: 'botao', onclick: () => mudar('perdida', 'Marcada como perdida.') }, 'Perdida'),
       ['nova', 'revisada', 'aprovada_para_contato'].includes(op.status) && h('button', { class: 'botao', onclick: () => mudar('descartada', 'Descartada.') }, 'Descartar'),
       ['descartada', 'perdida', 'obsoleta'].includes(op.status) && h('button', { class: 'botao', onclick: () => mudar('nova', 'Reaberta.') }, 'Reabrir'),
-      empresa.cnpj && h('button', { class: 'botao perigo', onclick: confirmarOptOut }, 'Não contatar')),
-    h('p', { class: 'ajuda', style: { marginTop: '12px' } }, 'Nada é enviado automaticamente: o Neo só lê empresas aprovadas aqui.'),
-    area);
+      h('button', { class: 'botao perigo', onclick: confirmarOptOut }, ICONE_BLOQUEIO(15), 'Não contatar')),
+    h('p', { class: 'ajuda', style: { marginTop: '12px' } }, 'Nada é enviado automaticamente: o Neo só lê empresas aprovadas aqui.'));
 }
 
 /** Tarefas com data ("ligar terça", "enviar proposta"). As vencidas aparecem no "Para hoje". */

@@ -663,4 +663,33 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(abertas[0]).toMatchObject({ id: op!.id, status: 'respondeu' });
     expect((await app.inject({ method: 'GET', url: '/v1/painel/oportunidades-abertas?busca=%25zzz', headers: AUTH })).json()).toEqual([]);
   });
+
+  it('não contatar pela ficha: bloqueia CNPJ e contatos, descarta, registra e a ficha mostra o bloqueio', async () => {
+    await ingest([candidata()]);
+    const [emp] = await sql`select id, cnpj from empresa`;
+    const [op] = await sql`select id from oportunidade`;
+    await sql`update oportunidade set status = 'aprovada_para_contato' where id = ${op!.id}`;
+    expect((await app.inject({ method: 'GET', url: `/v1/empresas/${emp!.id}`, headers: AUTH })).json().nao_contatar).toEqual([]);
+
+    const r = await app.inject({ method: 'POST', url: `/v1/empresas/${emp!.id}/nao-contatar`, headers: AUTH, payload: { motivo: 'pediu no WhatsApp' } });
+    expect(r.statusCode).toBe(201);
+    const corpo = r.json();
+    expect(corpo.oportunidades_descartadas).toBe(1);
+    if (emp!.cnpj) expect(corpo.bloqueados.map((b: { chave: string }) => b.chave)).toContain('cnpj');
+    expect(corpo.bloqueados.some((b: { chave: string }) => b.chave === 'telefone')).toBe(true);
+    const [depois] = await sql`select status from oportunidade where id = ${op!.id}`;
+    expect(depois!.status).toBe('descartada');
+    const [nota] = await sql`select resumo from interacao where oportunidade_id = ${op!.id} order by registrado_em desc limit 1`;
+    expect(nota!.resumo).toContain('Não contatar: pediu no WhatsApp');
+
+    const ficha = (await app.inject({ method: 'GET', url: `/v1/empresas/${emp!.id}`, headers: AUTH })).json();
+    expect(ficha.nao_contatar.length).toBe(corpo.bloqueados.length);
+    expect(ficha.nao_contatar[0]).toMatchObject({ motivo: 'pediu no WhatsApp' });
+    // não volta em buscas
+    const de_novo = (await ingest([candidata()])).json().resultados[0];
+    expect(de_novo.acao).toBe('bloqueada_opt_out');
+    // repetir não quebra (idempotente)
+    expect((await app.inject({ method: 'POST', url: `/v1/empresas/${emp!.id}/nao-contatar`, headers: AUTH, payload: {} })).statusCode).toBe(201);
+    expect((await app.inject({ method: 'POST', url: `/v1/empresas/00000000-0000-4000-8000-000000000000/nao-contatar`, headers: AUTH, payload: {} })).statusCode).toBe(404);
+  });
 });

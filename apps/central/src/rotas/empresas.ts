@@ -137,8 +137,8 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
     const [empresa] = await sql`select * from empresa where id = ${id}`;
     if (!empresa) return reply.code(404).send({ erro: 'empresa não encontrada' });
 
-    const [contatos, identificadores, evidencias, presenca, auditorias, oportunidades, revisoes, whatsapp, envios, pedidoAuditoria] = await Promise.all([
-      sql`select c.tipo, c.valor, c.publico_comercial, c.evidencia_id, ev.fonte, ev.url as fonte_url
+    const [contatos, identificadores, evidencias, presenca, auditorias, oportunidades, revisoes, whatsapp, envios, pedidoAuditoria, naoContatar] = await Promise.all([
+      sql`select c.tipo, c.valor, c.valor_normalizado, c.publico_comercial, c.evidencia_id, ev.fonte, ev.url as fonte_url
             from contato c left join evidencia ev on ev.id = c.evidencia_id where c.empresa_id = ${id}`,
       sql`select fonte, valor from identificador_externo where empresa_id = ${id}`,
       sql`select id, fonte, url, coletado_em, expira_em, confiabilidade, operador, payload
@@ -161,6 +161,15 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
             from neo.envio x join oportunidade o on o.id = x.oportunidade_id
            where o.empresa_id = ${id} order by x.reservado_em desc limit 20`,
       sql`select motivo, pedido_em, reservado_em, tentativas, proxima_tentativa, ultimo_erro from auditoria_pedido where empresa_id = ${id}`,
+      // pedidos de "não contatar" que pegam esta empresa (pelo CNPJ, telefone, e-mail ou domínio)
+      sql`select o.chave, o.valor, o.motivo, o.registrado_em from opt_out o
+           where (o.chave = 'cnpj' and o.valor = ${(empresa.cnpj as string | null) ?? ''})
+              or (o.chave in ('telefone', 'email') and exists (select 1 from contato c where c.empresa_id = ${id}
+                    and c.valor_normalizado = o.valor and (o.chave = 'email') = (c.tipo = 'email')))
+              or (o.chave = 'dominio' and (exists (select 1 from contato c where c.empresa_id = ${id} and c.tipo = 'email'
+                    and split_part(c.valor_normalizado, '@', 2) = o.valor)
+                  or exists (select 1 from presenca_digital p where p.empresa_id = ${id} and p.url_site ilike '%' || o.valor || '%')))
+           order by o.registrado_em`,
     ]);
 
     const tiposContato = new Set(contatos.map((c) => c.tipo as string));
@@ -174,6 +183,7 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
     return {
       empresa: dados, contatos, identificadores, presenca_digital: presenca[0] ?? null,
       auditorias, auditoria_pedido: pedidoAuditoria[0] ?? null, oportunidades, revisoes_merge_pendentes: revisoes,
+      nao_contatar: naoContatar,
       neo: { whatsapp: whatsapp[0] ?? null, envios },
       validacao: {
         fontes: [...new Set(evidencias.map((e) => e.fonte as string))],
