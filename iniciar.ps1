@@ -20,6 +20,20 @@ if (-not (Select-String -Path $env_ -Pattern '^PAINEL_SENHA=.{8,}' -Quiet)) {
 'DATABASE_URL','CENTRAL_API_KEYS','CENTRAL_API_KEY','CENTRAL_URL','TAVILY_API_KEY','EXA_API_KEY','PAINEL_SENHA','PAGESPEED_API_KEY' |
   ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
 
+# Se o CRM já estiver rodando (outra janela ou um processo que ficou para trás), encerra antes de subir de novo
+$porta = Get-NetTCPConnection -LocalPort 3333 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($porta) {
+  $proc = Get-Process -Id $porta.OwningProcess -ErrorAction SilentlyContinue
+  if ($proc -and $proc.ProcessName -eq 'node') {
+    Write-Host "O CRM já estava rodando (processo $($proc.Id)). Encerrando para iniciar de novo..." -ForegroundColor Yellow
+    Stop-Process -Id $proc.Id -Force
+    Start-Sleep 2
+  } else {
+    $nome = if ($proc) { $proc.ProcessName } else { 'desconhecido' }
+    throw "A porta 3333 está ocupada por outro programa ($nome). Feche-o e rode .\iniciar.ps1 de novo."
+  }
+}
+
 # Abre o painel quando a Central já estiver no ar
 Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 12; Start-Process http://localhost:3333'
 
