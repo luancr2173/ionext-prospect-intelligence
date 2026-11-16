@@ -69,6 +69,11 @@ function moverIndicador(animar) {
   if (!animar) ind.classList.add('sem-transicao');
   Object.assign(ind.style, { opacity: '1', width: `${ativa.offsetWidth}px`, transform: `translateX(${ativa.offsetLeft - 3}px)` });
   if (!animar) requestAnimationFrame(() => ind.classList.remove('sem-transicao'));
+  // no celular as abas rolam de lado: a ativa precisa ficar à vista
+  if (nav.scrollWidth > nav.clientWidth) {
+    const alvo = ativa.offsetLeft - (nav.clientWidth - ativa.offsetWidth) / 2;
+    nav.scrollTo({ left: Math.max(0, alvo), behavior: animar && !semMovimento() ? 'smooth' : 'auto' });
+  }
 }
 window.addEventListener('resize', () => { moverIndicador(false); deslizarAbaCanal(false); });
 
@@ -953,6 +958,298 @@ async function telaResultados(params) {
   );
 }
 
+// ------------------------------------------------------------------ precificação
+const CATEGORIAS_SERVICO = { sites: 'Sites', sistemas: 'Sistemas', ia_automacao: 'IA e automação', presenca: 'Presença e recorrentes', avulso: 'Avulsos' };
+const UNIDADE_SERVICO = { projeto: '', mes: '/mês', ano: '/ano', hora: '/hora', pagina: '/página', fluxo: '/fluxo' };
+const QTD_SERVICO = { hora: 'horas', pagina: 'páginas', fluxo: 'fluxos' };
+const ETAPAS_NOME = { ...Object.fromEntries(ETAPAS.map(([, nome, status]) => [status, nome])), nova: 'Nova', revisada: 'A revisar' };
+const CHAVE_ORCAMENTO = 'ionext.orcamento';
+
+function lerOrcamento() {
+  try {
+    const o = JSON.parse(localStorage.getItem(CHAVE_ORCAMENTO) || 'null');
+    if (o && Array.isArray(o.itens)) return { itens: o.itens, desconto: { tipo: 'pct', valor: 0, mensal: false, ...(o.desconto || {}) } };
+  } catch { /* navegador sem storage: segue só na memória */ }
+  return { itens: [], desconto: { tipo: 'pct', valor: 0, mensal: false } };
+}
+function salvarOrcamento(o) { try { localStorage.setItem(CHAVE_ORCAMENTO, JSON.stringify(o)); } catch { /* idem */ } }
+
+/** Contas do orçamento. Desconto em % pode valer também na mensalidade; em R$ vale só na implantação. */
+function calcularOrcamento(o) {
+  const soma = (c) => o.itens.filter((i) => i.cobranca === c).reduce((t, i) => t + (Number(i.preco) || 0) * (Number(i.qtd) || 0), 0);
+  const unico = soma('unico'); const mensal = soma('mensal'); const anual = soma('anual');
+  const v = Math.max(0, Number(o.desconto.valor) || 0);
+  const pct = o.desconto.tipo === 'pct' ? Math.min(v, 100) : 0;
+  const descUnico = o.desconto.tipo === 'pct' ? unico * pct / 100 : Math.min(v, unico);
+  const descMensal = o.desconto.tipo === 'pct' && o.desconto.mensal ? mensal * pct / 100 : 0;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  const totalUnico = r2(unico - descUnico); const totalMensal = r2(mensal - descMensal);
+  return { unico: r2(unico), mensal: r2(mensal), anual: r2(anual), descUnico: r2(descUnico), descMensal: r2(descMensal),
+    totalUnico, totalMensal, primeiroAno: r2(totalUnico + totalMensal * 12 + anual),
+    pctEfetivo: unico ? Math.round((descUnico / unico) * 1000) / 10 : 0 };
+}
+
+/** Texto para mandar ao cliente (sem faixa de mercado, só o que ele contrata). */
+function textoOrcamento(o, c) {
+  const linha = (i) => `• ${i.nome}${Number(i.qtd) !== 1 ? ` (${i.qtd} ${QTD_SERVICO[i.unidade] || 'x'})` : ''}: ${moeda(i.preco * i.qtd)}${UNIDADE_SERVICO[i.unidade] && i.cobranca !== 'unico' ? UNIDADE_SERVICO[i.unidade] : ''}`;
+  const grupo = (cob, titulo) => { const l = o.itens.filter((i) => i.cobranca === cob); return l.length ? [titulo, ...l.map(linha), ''] : []; };
+  return [
+    'Proposta IONEXT', '',
+    ...grupo('unico', 'Implantação'),
+    ...grupo('mensal', 'Mensal'),
+    ...grupo('anual', 'Anual'),
+    c.unico ? `Implantação: ${moeda(c.unico)}` : null,
+    c.descUnico ? `Desconto: −${moeda(c.descUnico)}` : null,
+    c.unico ? `Total da implantação: ${moeda(c.totalUnico)}` : null,
+    c.mensal ? `Mensalidade: ${moeda(c.totalMensal)}/mês${c.descMensal ? ` (com desconto de ${moeda(c.descMensal)})` : ''}` : null,
+    c.anual ? `Anual: ${moeda(c.anual)}/ano` : null,
+  ].filter((x) => x != null).join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
+/** Resumo curto que vai para "solução" da oportunidade (máx. 300). */
+function solucaoOrcamento(o, c) {
+  const nomes = o.itens.filter((i) => i.cobranca === 'unico').map((i) => i.nome);
+  const extras = [c.totalMensal ? `${moeda(c.totalMensal)}/mês` : null, c.anual ? `${moeda(c.anual)}/ano` : null,
+    c.descUnico ? `desconto ${o.desconto.tipo === 'pct' ? `${Math.min(o.desconto.valor, 100)}%` : moeda(c.descUnico)}` : null].filter(Boolean);
+  const mensais = o.itens.filter((i) => i.cobranca !== 'unico').map((i) => i.nome);
+  let t = [nomes.join(' + '), mensais.length ? `recorrente: ${mensais.join(', ')}` : null].filter(Boolean).join(' · ');
+  if (extras.length) t += ` (${extras.join(' · ')})`;
+  return t.length > 300 ? `${t.slice(0, 297)}…` : t;
+}
+
+/** Escolhe a oportunidade e grava valor + solução (e, se quiser, move para Proposta). */
+function usarNaProposta(o, c) {
+  return new Promise((resolver) => {
+    const busca = h('input', { type: 'search', id: 'prop-busca', placeholder: 'Buscar empresa…', autocomplete: 'off' });
+    const lista = h('div', { class: 'lista-prop', role: 'listbox', 'aria-label': 'Oportunidades' });
+    const opValor = (v, rotulo, marcado) => h('label', { class: 'opcao-radio' },
+      h('input', { type: 'radio', name: 'prop-valor', value: String(v), checked: marcado }), rotulo);
+    const mover = h('input', { type: 'checkbox', id: 'prop-mover', checked: true });
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    let escolhida = null;
+    const desenhar = (itens) => {
+      lista.replaceChildren(...(itens.length ? itens.map((x) => h('button', {
+        type: 'button', class: `prop-item${escolhida && escolhida.id === x.id ? ' ativa' : ''}`, role: 'option',
+        onclick: () => { escolhida = x; desenhar(itens); erro.textContent = ''; },
+      }, h('span', { class: 'item-titulo' }, x.nome_fantasia),
+        h('span', { class: 'item-sub' }, [ETAPAS_NOME[x.status] || x.status, x.bairro, x.proposta_valor ? `proposta atual ${moeda(x.proposta_valor)}` : null].filter(Boolean).join(' · ')))) :
+        [h('p', { class: 'legenda' }, 'Nenhuma oportunidade em andamento com esse nome.')]));
+    };
+    const carregar = async () => {
+      try { desenhar(await api('GET', `/v1/painel/oportunidades-abertas${busca.value.trim() ? `?busca=${encodeURIComponent(busca.value.trim())}` : ''}`)); }
+      catch (e) { erro.textContent = e.message; }
+    };
+    let t; busca.addEventListener('input', () => { clearTimeout(t); t = setTimeout(carregar, 250); });
+    const dlg = h('dialog', { class: 'dialogo dialogo-largo', 'aria-labelledby': 'dlg-prop-titulo' },
+      h('form', { method: 'dialog', onsubmit: async (ev) => {
+        ev.preventDefault();
+        if (!escolhida) { erro.textContent = 'Escolha a empresa.'; return; }
+        const valor = Number(dlg.querySelector('input[name=prop-valor]:checked').value);
+        try {
+          await api('PATCH', `/v1/oportunidades/${escolhida.id}/negocio`, { proposta_valor: valor, proposta_solucao: solucaoOrcamento(o, c) || null });
+          if (mover.checked && ['abordada', 'respondeu', 'reuniao'].includes(escolhida.status)) {
+            await api('PATCH', `/v1/oportunidades/${escolhida.id}`, { status: 'proposta' });
+          }
+          fechar(escolhida);
+        } catch (e) { erro.textContent = e.message; }
+      } },
+        h('h2', { id: 'dlg-prop-titulo' }, 'Usar numa ', h('em', {}, 'proposta')),
+        h('p', { class: 'legenda' }, 'O valor e a solução vão para o negócio da empresa (aparecem no funil e na ficha).'),
+        h('div', { class: 'campo' }, h('label', { for: 'prop-busca' }, 'Empresa'), busca),
+        lista,
+        h('div', { class: 'campo' }, h('span', { class: 'rotulo-campo' }, 'Valor da proposta'),
+          h('div', { class: 'opcoes-radio' },
+            c.totalUnico ? opValor(c.totalUnico, `Implantação · ${moeda(c.totalUnico)}`, true) : null,
+            (c.mensal || c.anual) ? opValor(c.primeiroAno, `Primeiro ano · ${moeda(c.primeiroAno)}`, !c.totalUnico) : null)),
+        h('label', { class: 'opcao-radio' }, mover, 'Mover para “Proposta” no funil (se estiver antes)'),
+        erro,
+        h('div', { class: 'acoes' },
+          h('button', { class: 'botao pequeno', type: 'button', onclick: () => fechar(null) }, 'Cancelar'),
+          h('button', { class: 'botao pequeno azul', type: 'submit' }, 'Gravar na proposta'))));
+    let feito = false;
+    const fechar = (v) => { if (feito) return; feito = true; dlg.close(); dlg.remove(); resolver(v); };
+    dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); fechar(null); });
+    document.body.append(dlg);
+    dlg.showModal();
+    busca.focus();
+    carregar();
+  });
+}
+
+async function telaPrecificacao() {
+  const servicos = await api('GET', '/v1/servicos');
+  atualizarMotor();
+  const o = lerOrcamento();
+  // preço do catálogo mudou? o item já no orçamento mantém o que foi combinado (pode editar na linha)
+  const mudou = () => { salvarOrcamento(o); desenharOrcamento(); };
+
+  const adicionar = (s) => {
+    const ja = o.itens.find((i) => i.servico_id === s.id);
+    if (ja) ja.qtd = Number(ja.qtd) + 1;
+    else o.itens.push({ servico_id: s.id, nome: s.nome, cobranca: s.cobranca, unidade: s.unidade, preco: s.preco, qtd: 1 });
+    mudou();
+    aviso(`${s.nome} no orçamento`);
+  };
+
+  // ---- catálogo
+  const faixa = (s) => s.faixa_min != null && s.faixa_max != null
+    ? `Mercado: ${moeda(s.faixa_min)} a ${moeda(s.faixa_max)}${UNIDADE_SERVICO[s.unidade]}` : 'Sem pesquisa de mercado (criado por você)';
+  const posicao = (s) => {
+    if (s.faixa_min == null || s.faixa_max == null || s.faixa_max <= s.faixa_min) return null;
+    const p = Math.max(0, Math.min(100, ((s.preco - s.faixa_min) / (s.faixa_max - s.faixa_min)) * 100));
+    return h('span', { class: 'faixa', title: 'Onde o seu preço fica dentro da faixa do mercado' },
+      h('span', { class: 'faixa-ponto', style: { left: `${p}%` } }));
+  };
+  const editarPreco = (s, el) => {
+    const inp = h('input', { type: 'number', min: '0', step: '10', value: String(s.preco), class: 'preco-input', 'aria-label': `Seu preço para ${s.nome}` });
+    const salvar = async () => {
+      const v = Number(inp.value);
+      if (!Number.isFinite(v) || v < 0 || v === s.preco) { el.replaceWith(linhaServico(s)); return; }
+      try { Object.assign(s, await api('PATCH', `/v1/servicos/${s.id}`, { preco: v })); aviso('Preço atualizado'); }
+      catch (e) { aviso(e.message); }
+      el.replaceWith(linhaServico(s));
+    };
+    inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); inp.blur(); } if (ev.key === 'Escape') { inp.value = String(s.preco); inp.blur(); } });
+    inp.addEventListener('blur', salvar, { once: true });
+    el.querySelector('.preco-seu').replaceChildren(inp);
+    inp.focus(); inp.select();
+  };
+  const linhaServico = (s) => {
+    const el = h('div', { class: 'servico' },
+      h('div', { class: 'servico-info' },
+        h('div', { class: 'item-titulo' }, s.nome),
+        s.descricao && h('div', { class: 'item-sub' }, s.descricao),
+        h('div', { class: 'servico-mercado' }, h('span', { class: 'mono' }, faixa(s)), posicao(s)),
+        (s.nota_mercado || (s.fontes || []).length) && h('details', { class: 'fontes' },
+          h('summary', {}, 'Pesquisa e fontes'),
+          s.nota_mercado && h('p', {}, s.nota_mercado),
+          h('ul', {}, (s.fontes || []).map((f) => h('li', {}, linkSeguro(f.url, f.titulo)))))),
+      h('div', { class: 'servico-acoes' },
+        h('button', { type: 'button', class: 'preco-seu', title: 'Clique para mudar o seu preço', onclick: () => editarPreco(s, el) },
+          h('span', { class: 'preco-rotulo mono' }, 'Seu preço'),
+          h('span', { class: 'preco-valor' }, moeda(s.preco), h('small', {}, UNIDADE_SERVICO[s.unidade]))),
+        h('button', { type: 'button', class: 'botao pequeno azul botao-mais', 'aria-label': `Adicionar ${s.nome}`, onclick: () => adicionar(s) }, '+')));
+    return el;
+  };
+  const porCategoria = Object.keys(CATEGORIAS_SERVICO).map((c) => [c, servicos.filter((s) => s.categoria === c)]).filter(([, l]) => l.length);
+
+  const novoNome = h('input', { id: 'novo-serv-nome', maxlength: '120', placeholder: 'Ex.: Cardápio digital' });
+  const novoCob = h('select', { id: 'novo-serv-cob' }, h('option', { value: 'unico' }, 'Pagamento único'), h('option', { value: 'mensal' }, 'Mensal'), h('option', { value: 'anual' }, 'Anual'));
+  const novoPreco = h('input', { id: 'novo-serv-preco', type: 'number', min: '0', step: '10', placeholder: '0' });
+  const formNovo = h('form', { class: 'novo-servico', onsubmit: async (ev) => {
+    ev.preventDefault();
+    if (!novoNome.value.trim() || novoPreco.value === '') { aviso('Informe nome e preço'); return; }
+    try {
+      const unidade = { unico: 'projeto', mensal: 'mes', anual: 'ano' }[novoCob.value];
+      const s = await api('POST', '/v1/servicos', { nome: novoNome.value.trim(), cobranca: novoCob.value, unidade, preco: Number(novoPreco.value) });
+      servicos.push(s); adicionar(s); render();
+    } catch (e) { aviso(e.message); }
+  } },
+    h('div', { class: 'campo' }, h('label', { for: 'novo-serv-nome' }, 'Serviço que não está na lista'), novoNome),
+    h('div', { class: 'campo' }, h('label', { for: 'novo-serv-cob' }, 'Cobrança'), novoCob),
+    h('div', { class: 'campo' }, h('label', { for: 'novo-serv-preco' }, 'Preço (R$)'), novoPreco),
+    h('button', { class: 'botao pequeno', type: 'submit' }, 'Criar e adicionar'));
+
+  const catalogo = h('div', { class: 'pilha' },
+    porCategoria.map(([c, lista]) => h('div', { class: 'cartao' },
+      h('h2', {}, CATEGORIAS_SERVICO[c]),
+      h('div', { class: 'servicos' }, lista.map(linhaServico)))),
+    h('div', { class: 'cartao' }, h('h2', {}, 'Serviço ', h('em', {}, 'avulso')), formNovo,
+      h('p', { class: 'ajuda', style: { marginTop: '10px' } }, 'Fica salvo no catálogo para os próximos orçamentos.')));
+
+  // ---- orçamento
+  const cartaoOrc = h('div', { class: 'cartao orcamento' });
+  const totais = h('div', { class: 'totais' });
+  const desenharTotais = () => {
+    const c = calcularOrcamento(o);
+    const linha = (rotulo, valor, cls) => h('div', { class: `total-linha${cls ? ` ${cls}` : ''}` }, h('span', {}, rotulo), h('span', { class: 'num' }, valor));
+    totais.replaceChildren(...[
+      c.unico ? linha('Implantação', moeda(c.unico)) : null,
+      c.descUnico ? linha(`Desconto${o.desconto.tipo === 'pct' ? ` (${Math.min(o.desconto.valor, 100)}%)` : ` (${c.pctEfetivo.toLocaleString('pt-BR')}%)`}`, `−${moeda(c.descUnico)}`, 'desconto') : null,
+      h('div', { class: 'total-grande' },
+        h('div', { class: 'kpi-rotulo' }, c.unico ? 'Total da implantação' : 'Total'),
+        h('div', { class: 'kpi-valor destaque' }, moeda(c.unico ? c.totalUnico : c.totalMensal))),
+      c.descMensal ? linha(`Desconto na mensalidade (de ${moeda(c.mensal)})`, `−${moeda(c.descMensal)}/mês`, 'desconto') : null,
+      c.mensal ? linha(c.descMensal ? 'Mensalidade com desconto' : 'Mensalidade', `${moeda(c.totalMensal)}/mês`) : null,
+      c.anual ? linha('Anual', `${moeda(c.anual)}/ano`) : null,
+      (c.mensal || c.anual) ? linha('Primeiro ano (implantação + 12 meses + anual)', moeda(c.primeiroAno), 'primeiro-ano') : null].filter(Boolean));
+    acoesOrc.querySelectorAll('button[data-precisa]').forEach((b) => { b.disabled = o.itens.length === 0; });
+  };
+
+  const descValor = h('input', { id: 'desc-valor', type: 'number', min: '0', step: '1', value: o.desconto.valor ? String(o.desconto.valor) : '', placeholder: '0', inputmode: 'decimal' });
+  const descMensal = h('input', { type: 'checkbox', id: 'desc-mensal', checked: o.desconto.mensal });
+  const linhaMensal = h('label', { class: 'opcao-radio', hidden: o.desconto.tipo !== 'pct' }, descMensal, 'Aplicar também na mensalidade');
+  const tipoBotao = (tipo, rotulo) => h('button', { type: 'button', class: `alternar-op${o.desconto.tipo === tipo ? ' ativa' : ''}`, 'aria-pressed': String(o.desconto.tipo === tipo),
+    onclick: (ev) => {
+      o.desconto.tipo = tipo;
+      ev.currentTarget.parentElement.querySelectorAll('button').forEach((b) => { const on = b === ev.currentTarget; b.classList.toggle('ativa', on); b.setAttribute('aria-pressed', String(on)); });
+      linhaMensal.hidden = tipo !== 'pct';
+      descValor.max = tipo === 'pct' ? '100' : '';
+      salvarOrcamento(o); desenharTotais();
+    } }, rotulo);
+  descValor.max = o.desconto.tipo === 'pct' ? '100' : '';
+  descValor.addEventListener('input', () => { o.desconto.valor = Number(descValor.value) || 0; salvarOrcamento(o); desenharTotais(); });
+  descMensal.addEventListener('change', () => { o.desconto.mensal = descMensal.checked; salvarOrcamento(o); desenharTotais(); });
+  const blocoDesconto = h('div', { class: 'desconto' },
+    h('label', { for: 'desc-valor' }, 'Desconto para o cliente'),
+    h('div', { class: 'desconto-linha' }, h('div', { class: 'alternar', role: 'group', 'aria-label': 'Tipo de desconto' }, tipoBotao('pct', '%'), tipoBotao('valor', 'R$')), descValor),
+    linhaMensal);
+
+  const acoesOrc = h('div', { class: 'acoes acoes-orcamento' },
+    h('button', { type: 'button', class: 'botao pequeno azul', 'data-precisa': '1', onclick: async () => {
+      const op = await usarNaProposta(o, calcularOrcamento(o));
+      if (op) aviso(`Proposta gravada em ${op.nome_fantasia}`);
+    } }, 'Usar numa proposta'),
+    h('button', { type: 'button', class: 'botao pequeno', 'data-precisa': '1', onclick: async () => {
+      const texto = textoOrcamento(o, calcularOrcamento(o));
+      try { await navigator.clipboard.writeText(texto); aviso('Resumo copiado — é só colar no WhatsApp ou e-mail'); }
+      catch {
+        const ta = h('textarea', { style: { position: 'fixed', opacity: '0' } }, texto); document.body.append(ta); ta.select();
+        try { document.execCommand('copy'); aviso('Resumo copiado'); } catch { aviso('Não deu para copiar'); } ta.remove();
+      }
+    } }, 'Copiar resumo'),
+    h('button', { type: 'button', class: 'botao-texto', 'data-precisa': '1', onclick: () => {
+      if (!o.itens.length) return;
+      o.itens = []; o.desconto = { tipo: o.desconto.tipo, valor: 0, mensal: o.desconto.mensal }; descValor.value = ''; mudou();
+    } }, 'Limpar'));
+
+  function desenharOrcamento() {
+    const itens = o.itens.map((i, idx) => {
+      const qtd = h('input', { type: 'number', min: '1', step: '1', value: String(i.qtd), class: 'qtd-input', 'aria-label': `Quantidade de ${i.nome}` });
+      const preco = h('input', { type: 'number', min: '0', step: '10', value: String(i.preco), class: 'preco-input', 'aria-label': `Preço de ${i.nome} neste orçamento` });
+      const sub = h('span', { class: 'orc-sub num' });
+      const atual = () => { sub.textContent = `${moeda((Number(i.preco) || 0) * (Number(i.qtd) || 0))}${i.cobranca === 'unico' ? '' : UNIDADE_SERVICO[i.unidade] || ''}`; };
+      qtd.addEventListener('input', () => { i.qtd = Math.max(0, Math.floor(Number(qtd.value) || 0)); atual(); salvarOrcamento(o); desenharTotais(); });
+      qtd.addEventListener('change', () => { if (!i.qtd) { o.itens.splice(idx, 1); mudou(); } });
+      preco.addEventListener('input', () => { i.preco = Math.max(0, Number(preco.value) || 0); atual(); salvarOrcamento(o); desenharTotais(); });
+      atual();
+      return h('div', { class: 'orc-item' },
+        h('div', { class: 'orc-nome' }, h('span', { class: 'item-titulo' }, i.nome),
+          h('span', { class: `etiqueta ${i.cobranca === 'unico' ? '' : 'e-ok'}` }, i.cobranca === 'unico' ? 'único' : i.cobranca),
+          h('button', { type: 'button', class: 'botao-texto remover', 'aria-label': `Tirar ${i.nome}`, title: 'Tirar do orçamento', onclick: () => { o.itens.splice(idx, 1); mudou(); } }, '×')),
+        h('div', { class: 'orc-campos' },
+          h('label', { class: 'orc-campo' }, h('span', {}, QTD_SERVICO[i.unidade] || 'qtd.'), qtd),
+          h('label', { class: 'orc-campo orc-preco' }, h('span', {}, `R$${UNIDADE_SERVICO[i.unidade] || ''}`), preco),
+          sub));
+    });
+    cartaoOrc.replaceChildren(
+      h('div', { class: 'titulo-cartao' }, h('h2', { style: { margin: 0 } }, 'Orça', h('em', {}, 'mento')),
+        o.itens.length ? h('span', { class: 'contador' }, o.itens.length) : null),
+      o.itens.length ? h('div', { class: 'orc-itens' }, itens)
+        : h('div', { class: 'hoje-vazio' }, 'Clique em + nos serviços ao lado para montar o orçamento.'),
+      blocoDesconto, totais, acoesOrc);
+    desenharTotais();
+  }
+  desenharOrcamento();
+
+  $app.replaceChildren(
+    h('div', { class: 'cabecalho' }, h('div', {},
+      h('span', { class: 'indice mono' }, '(05) — Proposta'),
+      h('h1', {}, 'Precifi', h('em', {}, 'cação')),
+      h('p', { class: 'legenda' }, 'Monte o orçamento com os serviços da IONEXT. A faixa de mercado vem de pesquisa com fonte (nov/2026); o seu preço você ajusta clicando nele.'))),
+    h('div', { class: 'grade grade-2 precificacao' }, catalogo, h('div', { class: 'orcamento-coluna' }, cartaoOrc)));
+}
+
 async function telaEmpresa(id) {
   const f = await api('GET', `/v1/empresas/${id}`);
   const e = f.empresa;
@@ -1373,7 +1670,7 @@ async function render() {
   const params = new URLSearchParams(qs || '');
   document.querySelectorAll('.abas a').forEach((a) => a.classList.toggle('ativa',
     (a.dataset.aba === 'inicio' && caminho === '/') || (a.dataset.aba === 'empresas' && caminho.startsWith('/empresa'))
-    || (a.dataset.aba === 'funil' && caminho === '/funil') || (a.dataset.aba === 'resultados' && caminho === '/resultados')));
+    || (a.dataset.aba === 'funil' && caminho === '/funil') || (a.dataset.aba === 'resultados' && caminho === '/resultados') || (a.dataset.aba === 'precificacao' && caminho === '/precificacao')));
   moverIndicador(!primeira);
   // filtro na mesma tela: a pílula vai para a opção clicada na hora, antes dos dados chegarem
   if (filtrando && !semMovimento()) {
@@ -1395,6 +1692,7 @@ async function render() {
     } else if (caminho === '/empresas') await telaEmpresas(params);
     else if (caminho === '/funil') await telaFunil(params);
     else if (caminho === '/resultados') await telaResultados(params);
+    else if (caminho === '/precificacao') await telaPrecificacao();
     else if (caminho.startsWith('/empresa/')) await telaEmpresa(caminho.split('/')[2]);
     else location.hash = '#/';
     if (caminho !== '/funil') $app.classList.remove('largo'); // só depois de a tela nova estar pronta (evita o pulo lateral)

@@ -624,4 +624,40 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect((await app.inject({ method: 'GET', url: '/painel/fontes/..%2F..%2Fpackage.json' })).statusCode).toBe(404);
     expect((await app.inject({ method: 'GET', url: '/painel/tema.js' })).statusCode).toBe(200);
   });
+
+  it('precificação: catálogo com faixa e fonte, preço editável, serviço avulso e oportunidades abertas', async () => {
+    await sql`delete from servico where chave is null`;
+    const lista = (await app.inject({ method: 'GET', url: '/v1/servicos', headers: AUTH })).json();
+    expect(lista.length).toBeGreaterThanOrEqual(15);
+    for (const s of lista) {
+      // todo serviço do catálogo inicial tem faixa de mercado com fonte; o preço da IONEXT começa dentro dela
+      expect(s.fontes.length).toBeGreaterThan(0);
+      expect(s.fontes.every((f: { url: string }) => /^https:\/\//.test(f.url))).toBe(true);
+      expect(s.preco).toBeGreaterThanOrEqual(s.faixa_min);
+      expect(s.preco).toBeLessThanOrEqual(s.faixa_max);
+    }
+    const lp = lista.find((s: { chave: string }) => s.chave === 'landing_page');
+    const novo = await app.inject({ method: 'PATCH', url: `/v1/servicos/${lp.id}`, headers: AUTH, payload: { preco: 2800 } });
+    expect(novo.json()).toMatchObject({ preco: 2800, faixa_min: 900, faixa_max: 5000 });
+    // a faixa de mercado não muda pelo painel
+    expect((await app.inject({ method: 'PATCH', url: `/v1/servicos/${lp.id}`, headers: AUTH, payload: { faixa_min: 1 } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PATCH', url: `/v1/servicos/${lp.id}`, headers: AUTH, payload: { preco: -1 } })).statusCode).toBe(400);
+    await app.inject({ method: 'PATCH', url: `/v1/servicos/${lp.id}`, headers: AUTH, payload: { preco: lp.preco } });
+
+    const criado = await app.inject({ method: 'POST', url: '/v1/servicos', headers: AUTH, payload: { nome: 'Cardápio digital', cobranca: 'mensal', unidade: 'mes', preco: 90 } });
+    expect(criado.statusCode).toBe(201);
+    expect(criado.json()).toMatchObject({ nome: 'Cardápio digital', categoria: 'avulso', faixa_min: null, fontes: [] });
+    await app.inject({ method: 'PATCH', url: `/v1/servicos/${criado.json().id}`, headers: AUTH, payload: { ativo: false } });
+    const ativos = (await app.inject({ method: 'GET', url: '/v1/servicos', headers: AUTH })).json();
+    expect(ativos.some((s: { nome: string }) => s.nome === 'Cardápio digital')).toBe(false);
+    await sql`delete from servico where chave is null`;
+
+    await ingest([candidata()]);
+    const [op] = await sql`select id from oportunidade`;
+    await sql`update oportunidade set status = 'respondeu' where id = ${op!.id}`;
+    const abertas = (await app.inject({ method: 'GET', url: '/v1/painel/oportunidades-abertas?busca=sorr', headers: AUTH })).json();
+    expect(abertas).toHaveLength(1);
+    expect(abertas[0]).toMatchObject({ id: op!.id, status: 'respondeu' });
+    expect((await app.inject({ method: 'GET', url: '/v1/painel/oportunidades-abertas?busca=%25zzz', headers: AUTH })).json()).toEqual([]);
+  });
 });

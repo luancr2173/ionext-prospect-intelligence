@@ -588,3 +588,70 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 @media (max-width: 700px) { .psi { grid-template-columns: 1fr; } .prints { flex-direction: column; } .print-desktop { width: 100%; } }
 .evid > div { min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 560px) { .motor .motor-texto { display: none; } }
+
+/* ---------------------------------------------------------------- precificação */
+.precificacao { align-items: start; }
+.orcamento-coluna { position: sticky; top: 88px; }
+@media (max-width: 900px) { .orcamento-coluna { position: static; order: -1; } }
+.servicos { display: grid; }
+.servico { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; padding: 16px 0; border-top: 1px solid var(--linha); }
+.servico:first-child { border-top: 0; padding-top: 0; }
+.servico:last-child { padding-bottom: 0; }
+.servico-info { display: grid; gap: 4px; min-width: 0; }
+.servico-mercado { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--suave); font-size: 11.5px; margin-top: 4px; }
+.faixa { position: relative; width: 72px; height: 4px; border-radius: 99px; background: var(--superficie-2); border: 1px solid var(--linha); }
+.faixa-ponto { position: absolute; top: 50%; width: 9px; height: 9px; border-radius: 50%; background: var(--azul); transform: translate(-50%, -50%); box-shadow: 0 0 0 3px var(--azul-fundo); }
+.fontes { font-size: 12.5px; color: var(--suave); margin-top: 2px; }
+.fontes summary { cursor: pointer; width: fit-content; color: var(--apagado); font-size: 12px; }
+.fontes summary:hover { color: var(--texto); }
+.fontes p { margin: 8px 0 6px; line-height: 1.45; }
+.fontes ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.servico-acoes { display: flex; align-items: center; gap: 10px; }
+.preco-seu { display: grid; justify-items: end; gap: 2px; background: none; border: 1px dashed transparent; border-radius: 10px; padding: 4px 8px; cursor: pointer; color: var(--texto); text-align: right; }
+.preco-seu:hover { border-color: var(--linha-forte); }
+.preco-rotulo { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--apagado); }
+.preco-valor { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.preco-valor small { font-size: 12px; font-weight: 400; color: var(--suave); margin-left: 2px; }
+.preco-seu .preco-input { width: 110px; text-align: right; }
+.botao-mais { width: 36px; height: 36px; padding: 0; font-size: 20px; line-height: 1; }
+.novo-servico { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+@media (max-width: 700px) { .novo-servico { grid-template-columns: minmax(0, 1fr); } .servico { grid-template-columns: minmax(0, 1fr); } .servico-acoes { justify-content: space-between; } .preco-seu { justify-items: start; text-align: left; } }
+
+.orcamento { display: grid; gap: 16px; }
+.orcamento .titulo-cartao { margin-bottom: 0; }
+.orc-itens { display: grid; }
+.orc-item { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--linha); }
+.orc-item:first-child { border-top: 0; padding-top: 0; }
+.orc-nome { display: flex; align-items: center; gap: 8px; }
+.orc-nome .item-titulo { flex: 1; min-width: 0; }
+.orc-nome .etiqueta { flex: none; font-size: 11px; }
+.orc-campos { display: grid; grid-template-columns: 70px minmax(0, 130px) minmax(0, 1fr); gap: 8px; align-items: end; }
+.orc-campo { display: grid; gap: 3px; }
+.orc-campo span { font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--apagado); }
+.orc-campo input { padding: 7px 9px; font-size: 13.5px; }
+.orc-sub { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; padding-bottom: 8px; white-space: nowrap; }
+.remover { font-size: 20px; line-height: 1; padding: 0 4px; margin-right: -4px; }
+.remover:hover { color: var(--vermelho); }
+.desconto { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--linha); }
+.desconto > label:first-child { color: var(--suave); font-size: 13px; }
+.desconto-linha { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; }
+.alternar { display: inline-flex; border: 1px solid var(--linha); border-radius: 999px; padding: 3px; background: var(--superficie-2); }
+.alternar-op { border: 0; background: transparent; color: var(--suave); padding: 6px 14px; border-radius: 999px; cursor: pointer; font-weight: 600; transition: background-color .2s, color .2s; }
+.alternar-op.ativa { background: var(--superficie); color: var(--texto); box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
+.opcao-radio { display: flex; align-items: center; gap: 8px; color: var(--suave); font-size: 13px; cursor: pointer; }
+.opcao-radio input { width: 16px; height: 16px; flex: none; }
+.opcoes-radio { display: grid; gap: 6px; }
+.rotulo-campo { color: var(--suave); font-size: 13px; }
+.totais { display: grid; gap: 6px; padding-top: 14px; border-top: 1px solid var(--linha); }
+.total-linha { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--suave); }
+.total-linha .num { color: var(--texto); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.total-linha.desconto .num { color: var(--verde); }
+.total-linha.primeiro-ano { margin-top: 6px; padding-top: 8px; border-top: 1px dashed var(--linha); font-size: 13px; }
+.total-grande { padding: 6px 0 4px; }
+.total-grande .kpi-valor { font-size: clamp(32px, 4vw, 44px); }
+.acoes-orcamento { align-items: center; }
+.dialogo-largo { width: min(520px, calc(100vw - 32px)); }
+.lista-prop { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; margin-top: -6px; }
+.prop-item { display: grid; gap: 2px; text-align: left; background: transparent; border: 1px solid var(--linha); border-radius: 10px; padding: 9px 12px; cursor: pointer; color: var(--texto); }
+.prop-item:hover { border-color: var(--linha-forte); }
+.prop-item.ativa { border-color: var(--azul); background: var(--azul-fundo); }
