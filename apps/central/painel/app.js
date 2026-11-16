@@ -959,7 +959,25 @@ async function telaResultados(params) {
 }
 
 // ------------------------------------------------------------------ precificação
-const CATEGORIAS_SERVICO = { sites: 'Sites', sistemas: 'Sistemas', ia_automacao: 'IA e automação', presenca: 'Presença e recorrentes', avulso: 'Avulsos' };
+/** Mesmos produtos, títulos e textos da seção "Comece por aqui" do site da IONEXT. */
+const PRODUTOS = {
+  atendimento: { n: '01', titulo: 'Atendimento', chamada: 'Nenhum contato fica sem resposta.',
+    resumo: 'Agente de IA no WhatsApp, 24 horas por dia, 7 dias na semana, que qualifica cada cliente.',
+    texto: 'Responde em segundos, entende o contexto da mensagem, esclarece dúvidas com a base de conhecimento da sua empresa e encaminha contatos quentes.' },
+  agendamento: { n: '02', titulo: 'Agendamento', chamada: 'Mais reuniões, sem troca de mensagens.',
+    resumo: 'Reuniões e demonstrações marcadas direto na agenda do time.',
+    texto: 'Cruza horários disponíveis, envia confirmação, sincroniza com Google Agenda ou Outlook e reduz no-show com lembretes automáticos.' },
+  acompanhamento: { n: '03', titulo: 'Acompanhamento', chamada: 'Ninguém esquecido no funil.',
+    resumo: 'Follow-up e reativação que se adaptam a cada cliente.',
+    texto: 'Retoma propostas paradas, cadencia contatos no momento certo e reativa clientes dormentes com mensagens personalizadas.' },
+  dashboards: { n: '04', titulo: 'Dashboards', chamada: 'Decisões com dados, em uma tela.',
+    resumo: 'Painel completo com as métricas do funil.',
+    texto: 'Acompanhe métricas do funil em tempo real: taxa de conversão, tempo de resposta, gargalos por etapa e custo por oportunidade.' },
+  sites: { n: '05', titulo: 'Sites & Landing Pages', chamada: 'Presença digital que converte visitantes em clientes.',
+    resumo: 'Criação de sites e landing pages de alta conversão, responsivos e velozes.',
+    texto: 'Desenvolvimento de páginas ultra-rápidas, design moderno e persuasivo, copywriting orientado a conversão e integração nativa com seus canais de atendimento e automação.' },
+  avulso: { n: '+', titulo: 'Avulsos', chamada: 'Fora dos produtos prontos.', resumo: 'Serviços que você criou para um caso específico.' },
+};
 const UNIDADE_SERVICO = { projeto: '', mes: '/mês', ano: '/ano', hora: '/hora', pagina: '/página', fluxo: '/fluxo' };
 const QTD_SERVICO = { hora: 'horas', pagina: 'páginas', fluxo: 'fluxos' };
 const ETAPAS_NOME = { ...Object.fromEntries(ETAPAS.map(([, nome, status]) => [status, nome])), nova: 'Nova', revisada: 'A revisar' };
@@ -1131,7 +1149,7 @@ async function telaPrecificacao() {
         h('button', { type: 'button', class: 'botao pequeno azul botao-mais', 'aria-label': `Adicionar ${s.nome}`, onclick: () => adicionar(s) }, '+')));
     return el;
   };
-  const porCategoria = Object.keys(CATEGORIAS_SERVICO).map((c) => [c, servicos.filter((s) => s.categoria === c)]).filter(([, l]) => l.length);
+  const porCategoria = Object.keys(PRODUTOS).map((c) => [c, servicos.filter((s) => s.categoria === c)]).filter(([, l]) => l.length);
 
   const novoNome = h('input', { id: 'novo-serv-nome', maxlength: '120', placeholder: 'Ex.: Cardápio digital' });
   const novoCob = h('select', { id: 'novo-serv-cob' }, h('option', { value: 'unico' }, 'Pagamento único'), h('option', { value: 'mensal' }, 'Mensal'), h('option', { value: 'anual' }, 'Anual'));
@@ -1151,8 +1169,14 @@ async function telaPrecificacao() {
     h('button', { class: 'botao pequeno', type: 'submit' }, 'Criar e adicionar'));
 
   const catalogo = h('div', { class: 'pilha' },
-    porCategoria.map(([c, lista]) => h('div', { class: 'cartao' },
-      h('h2', {}, CATEGORIAS_SERVICO[c]),
+    porCategoria.map(([c, lista]) => h('section', { class: 'cartao produto', 'aria-labelledby': `produto-${c}` },
+      h('header', { class: 'produto-topo' },
+        h('span', { class: 'produto-num mono' }, PRODUTOS[c].n),
+        h('div', {},
+          h('span', { class: 'produto-nome mono' }, PRODUTOS[c].titulo),
+          h('h2', { id: `produto-${c}` }, PRODUTOS[c].chamada),
+          h('p', { class: 'produto-resumo' }, PRODUTOS[c].resumo),
+          PRODUTOS[c].texto && h('p', { class: 'legenda produto-texto' }, PRODUTOS[c].texto))),
       h('div', { class: 'servicos' }, lista.map(linhaServico)))),
     h('div', { class: 'cartao' }, h('h2', {}, 'Serviço ', h('em', {}, 'avulso')), formNovo,
       h('p', { class: 'ajuda', style: { marginTop: '10px' } }, 'Fica salvo no catálogo para os próximos orçamentos.')));
@@ -1236,7 +1260,7 @@ async function telaPrecificacao() {
       h('div', { class: 'titulo-cartao' }, h('h2', { style: { margin: 0 } }, 'Orça', h('em', {}, 'mento')),
         o.itens.length ? h('span', { class: 'contador' }, o.itens.length) : null),
       o.itens.length ? h('div', { class: 'orc-itens' }, itens)
-        : h('div', { class: 'hoje-vazio' }, 'Clique em + nos serviços ao lado para montar o orçamento.'),
+        : h('div', { class: 'hoje-vazio' }, 'Clique em + nos produtos para montar o orçamento.'),
       blocoDesconto, totais, acoesOrc);
     desenharTotais();
   }
@@ -1246,7 +1270,7 @@ async function telaPrecificacao() {
     h('div', { class: 'cabecalho' }, h('div', {},
       h('span', { class: 'indice mono' }, '(05) — Proposta'),
       h('h1', {}, 'Precifi', h('em', {}, 'cação')),
-      h('p', { class: 'legenda' }, 'Monte o orçamento com os serviços da IONEXT. A faixa de mercado vem de pesquisa com fonte (nov/2026); o seu preço você ajusta clicando nele.'))),
+      h('p', { class: 'legenda' }, 'Produtos prontos, com preço fechado. Some os produtos do cliente, aplique o desconto e leve para a proposta. A faixa de mercado vem de pesquisa com fonte (nov/2026); o seu preço você ajusta clicando nele.'))),
     h('div', { class: 'grade grade-2 precificacao' }, catalogo, h('div', { class: 'orcamento-coluna' }, cartaoOrc)));
 }
 

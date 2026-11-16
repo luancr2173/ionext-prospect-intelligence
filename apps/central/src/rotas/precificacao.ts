@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Sql } from '../db.ts';
 
-const CATEGORIAS = ['sites', 'sistemas', 'ia_automacao', 'presenca', 'avulso'] as const;
+/** Os 5 produtos do site da IONEXT, na mesma ordem, + avulsos criados no painel. */
+const CATEGORIAS = ['atendimento', 'agendamento', 'acompanhamento', 'dashboards', 'sites', 'avulso'] as const;
 const COBRANCAS = ['unico', 'mensal', 'anual'] as const;
 const UNIDADES = ['projeto', 'mes', 'ano', 'hora', 'pagina', 'fluxo'] as const;
 const preco = z.number().min(0).max(9_999_999);

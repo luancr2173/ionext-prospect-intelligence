@@ -628,8 +628,10 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
   it('precificação: catálogo com faixa e fonte, preço editável, serviço avulso e oportunidades abertas', async () => {
     await sql`delete from servico where chave is null`;
     const lista = (await app.inject({ method: 'GET', url: '/v1/servicos', headers: AUTH })).json();
-    expect(lista.map((s: { chave: string }) => s.chave).filter((c: string) => ['landing_page', 'site_institucional', 'manutencao_site', 'site_premium_3d', 'reformulacao_site'].includes(c)))
-      .toEqual(['landing_page', 'site_institucional', 'manutencao_site']); // os sites que a IONEXT vende
+    // os 5 produtos do site da IONEXT, na ordem do site
+    expect([...new Set(lista.map((s: { categoria: string }) => s.categoria))]).toEqual(['atendimento', 'agendamento', 'acompanhamento', 'dashboards', 'sites']);
+    expect(lista.filter((s: { categoria: string }) => s.categoria === 'sites').map((s: { chave: string }) => s.chave))
+      .toEqual(['landing_page', 'site_institucional', 'manutencao_site']);
     for (const s of lista) {
       // todo serviço do catálogo inicial tem faixa de mercado com fonte; o preço da IONEXT começa dentro dela
       expect(s.fontes.length).toBeGreaterThan(0);
