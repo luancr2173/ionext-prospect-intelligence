@@ -199,7 +199,7 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(bloq!.n).toBe(1);
 
     const [c] = await sql`select neo.ao_receber('5561911112222', 'oi') as r`;
-    expect(c!.r).toEqual({ prospeccao: false });
+    expect(c!.r).toMatchObject({ prospeccao: false, nao_responder: false });
   });
 
   it('conversa: respostas do Neo na linha do tempo, pausa ao assumir e opt-out duvidoso em revisão', async () => {
@@ -340,5 +340,34 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     await expect(comoN8n('select * from neo.envio')).rejects.toThrow(/permission denied/);
     await expect(comoN8n("update neo.config set valor = 'false' where chave = 'modo_teste'")).rejects.toThrow(/permission denied/);
     await expect(comoN8n('select neo.montar_contexto(gen_random_uuid())')).rejects.toThrow(/permission denied/);
+  });
+
+  it('ao_receber: número com aparelho (":42"), resposta automática e número do contador', async () => {
+    await cfg('modo_teste', 'false');
+    expect((await sql`select neo._normalizar('556196339844:42@s.whatsapp.net') as n`)[0]!.n).toBe('+5561996339844');
+
+    const op = await aprovada('Epe Enigma Eventos', '61 99876-0050', 'auto');
+    const [r] = await reservar();
+    await sql`select neo.registrar_envio(${r!.envio_id}, 'Olá! Aqui é o Neo...', true)`;
+
+    // URA da empresa: reconhece a conversa mesmo com ":42", não responde e não conta como resposta
+    const [a] = await sql`select neo.ao_receber('556199876005' || '0:42@s.whatsapp.net',
+      'Fique a vontade para falar o que precisa, responderemos o mais breve possível. O número do seu atendimento é 26095102. Se precisar encerrar, digite: */encerrar*') as r`;
+    expect(a!.r).toMatchObject({ prospeccao: true, nao_responder: true, motivo: 'resposta_automatica', pausado: false });
+    expect((await sql`select status from oportunidade where id = ${op}`)[0]!.status).toBe('abordada');
+    const [nota] = await sql`select resumo from interacao where oportunidade_id = ${op} and direcao = 'entrada'`;
+    expect(nota!.resumo).toMatch(/^\[Resposta automática/);
+
+    // quem respondeu é a contabilidade (nome do WhatsApp): o Neo pausa para uma pessoa olhar
+    const [b] = await sql`select neo.ao_receber('5561998760050', 'Bom dia, do que se trata?', 'Prime Contabilidade') as r`;
+    expect(b!.r).toMatchObject({ nao_responder: true, pausado: true, motivo: 'numero_de_terceiro' });
+    const [o] = await sql`select neo_pausado_em from oportunidade where id = ${op}`;
+    expect(o!.neo_pausado_em).not.toBeNull();
+    expect(await sql`select neo.pode_responder('5561998760050') as p`).toEqual([{ p: false }]);
+
+    // pessoa de verdade, número fora da prospecção: responde normal; robô fora da prospecção: não responde
+    expect((await sql`select neo.ao_receber('5561911113333', 'Oi, quero um site') as r`)[0]!.r).toMatchObject({ prospeccao: false, nao_responder: false });
+    expect((await sql`select neo.ao_receber('5561911113333', 'Obrigado pelo contato! Em breve retornaremos.') as r`)[0]!.r)
+      .toMatchObject({ prospeccao: false, nao_responder: true });
   });
 });
