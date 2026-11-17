@@ -133,7 +133,7 @@ h2 em { color: var(--azul); font-size: 1.15em; }
 .grade { display: grid; gap: 16px; }
 .grade-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .grade-2 { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; }
-@media (max-width: 1100px) { .busca-rapida { display: none; } }
+@media (max-width: 1180px) { .busca-rapida { display: none; } }
 @media (max-width: 900px) {
   .grade-4 { grid-template-columns: repeat(2, 1fr); } .grade-2 { grid-template-columns: minmax(0, 1fr); }
   /* no celular as abas descem para uma linha própria, com rolagem lateral */
@@ -692,3 +692,66 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .contato .contato-alerta { color: var(--vermelho); margin-top: 3px; }
 .contato .contato-nota { color: var(--ambar); margin-top: 3px; }
 .contato > .etiqueta { flex: none; white-space: nowrap; align-self: flex-start; }
+
+/* ---------------------------------------------------------------- demandas */
+.dm-resumo { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: -12px 0 18px; color: var(--suave); font-size: 14px; }
+.dm-resumo b { color: var(--texto); font-size: 18px; margin-right: 2px; font-variant-numeric: tabular-nums; }
+.dm-resumo .ruim b { color: var(--vermelho); }
+.dm-kanban { grid-auto-columns: minmax(248px, 1fr); }
+.dm-a_fazer > header > span:first-child::before, .dm-andamento > header > span:first-child::before,
+.dm-aguardando > header > span:first-child::before, .dm-concluida > header > span:first-child::before {
+  content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: var(--apagado); }
+.dm-andamento > header > span:first-child::before { background: var(--azul); }
+.dm-aguardando > header > span:first-child::before { background: var(--ambar); }
+.dm-concluida > header > span:first-child::before { background: var(--verde); }
+.coluna > header .dobrar { font-size: 16px; line-height: 1; }
+.card-demanda { cursor: pointer; }
+.card-demanda.prio-alta { box-shadow: inset 3px 0 0 var(--vermelho); }
+.card-demanda.prio-baixa .card-nome { color: var(--suave); }
+.dm-concluida .card-demanda { opacity: .7; }
+.dm-concluida .card-demanda .card-nome { text-decoration: line-through; text-decoration-color: var(--apagado); }
+.chip-tipo { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--linha); color: var(--suave); white-space: nowrap; }
+.chip-tipo.tipo-sites { border-color: var(--azul-borda, var(--linha)); color: var(--azul); }
+.chip-tipo.tipo-interno { border-style: dashed; }
+.card-valor { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; margin-left: auto; }
+.card-rodape { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-family: var(--mono); font-size: 11px; color: var(--suave); }
+.card-rodape .prazo.atrasada { color: var(--vermelho); font-weight: 600; }
+.card-rodape .prazo.perto { color: var(--ambar); }
+.dm-progresso { display: inline-flex; align-items: center; gap: 6px; }
+.dm-progresso .dm-barra { width: 44px; height: 4px; border-radius: 99px; background: var(--superficie-2); overflow: hidden; }
+.dm-progresso .dm-barra span { display: block; height: 100%; background: var(--azul); border-radius: 99px; }
+.dm-progresso.completo .dm-barra span { background: var(--verde); }
+.marca-soltar { height: 3px; border-radius: 99px; background: var(--azul); margin: -4px 0; }
+
+.dialogo-demanda { width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.dm-topo { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.dm-grade { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 560px) { .dm-grade { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.dm-cliente-campo { position: relative; }
+.dm-base { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--verde); margin-left: 6px; }
+.dm-sugestoes { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--superficie); border: 1px solid var(--linha-forte);
+  border-radius: 12px; box-shadow: var(--sombra); padding: 4px; display: grid; }
+.dm-sugestoes button { display: grid; gap: 1px; text-align: left; background: none; border: 0; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--texto); }
+.dm-sugestoes button:hover, .dm-sugestoes button:focus { background: var(--superficie-2); }
+.dm-sugestoes small { color: var(--suave); font-size: 12px; }
+.dm-check { display: grid; gap: 2px; margin-bottom: 6px; }
+.dm-item { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+.dm-item:hover { background: var(--superficie-2); }
+.dm-item input { width: 16px; height: 16px; flex: none; }
+.dm-item span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dm-item.feito span { text-decoration: line-through; color: var(--suave); }
+.dm-nova-nota { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.dm-notas { display: grid; gap: 8px; margin-top: 10px; }
+.dm-nota { border-left: 2px solid var(--linha-forte); padding: 2px 0 2px 12px; }
+.dm-nota p { margin: 0 0 2px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dm-nota small { color: var(--suave); font-size: 12px; }
+.dm-acoes { align-items: center; }
+.dm-acoes .espaco { flex: 1; }
+.perigo-texto { color: var(--vermelho); }
+.perigo-texto.armado { font-weight: 600; }
+@media (max-width: 1480px) and (min-width: 561px) { .motor .motor-texto { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; } }
+@media (max-width: 1300px) { .motor .motor-texto { display: none; } }
+
+.lista-demandas { display: grid; gap: 6px; }
+.linha-demanda { display: grid; gap: 2px; text-align: left; background: none; border: 1px solid var(--linha); border-radius: 10px; padding: 9px 12px; cursor: pointer; color: var(--texto); }
+.linha-demanda:hover { border-color: var(--linha-forte); }

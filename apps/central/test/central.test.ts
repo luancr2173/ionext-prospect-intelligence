@@ -692,4 +692,46 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect((await app.inject({ method: 'POST', url: `/v1/empresas/${emp!.id}/nao-contatar`, headers: AUTH, payload: {} })).statusCode).toBe(201);
     expect((await app.inject({ method: 'POST', url: `/v1/empresas/00000000-0000-4000-8000-000000000000/nao-contatar`, headers: AUTH, payload: {} })).statusCode).toBe(404);
   });
+
+  it('demandas: cria (com e sem cliente da base), move no quadro, conclui, checklist, notas, arquiva e apaga', async () => {
+    await sql`truncate demanda cascade`;
+    await ingest([candidata()]);
+    const [emp] = await sql`select id, nome_fantasia from empresa`;
+    const post = (payload: Record<string, unknown>) => app.inject({ method: 'POST', url: '/v1/demandas', headers: AUTH, payload });
+
+    const site = await post({ titulo: 'Criar o site', tipo: 'sites', empresa_id: emp!.id, prazo: '2026-12-01', valor: 2500,
+      checklist: [{ texto: 'Briefing' }, { texto: 'Layout' }] });
+    expect(site.statusCode).toBe(201);
+    expect(site.json()).toMatchObject({ status: 'a_fazer', empresa_nome: emp!.nome_fantasia, prazo: '2026-12-01', valor: 2500,
+      checklist: [{ texto: 'Briefing', feito: false }, { texto: 'Layout', feito: false }] });
+    const interna = await post({ titulo: 'Gravar vídeo do Neo', tipo: 'interno', cliente_nome: 'IONEXT' });
+    expect(interna.json()).toMatchObject({ empresa_id: null, cliente_nome: 'IONEXT', prioridade: 'media' });
+    // a mais nova entra no topo da coluna
+    const quadro = (await app.inject({ method: 'GET', url: '/v1/demandas', headers: AUTH })).json();
+    expect(quadro.map((d: { titulo: string }) => d.titulo)).toEqual(['Gravar vídeo do Neo', 'Criar o site']);
+
+    expect((await post({ titulo: '' })).statusCode).toBe(400);
+    expect((await post({ titulo: 'x', empresa_id: '00000000-0000-4000-8000-000000000000' })).statusCode).toBe(422);
+
+    const id = site.json().id;
+    const patch = (payload: Record<string, unknown>) => app.inject({ method: 'PATCH', url: `/v1/demandas/${id}`, headers: AUTH, payload });
+    expect((await patch({ status: 'andamento', checklist: [{ texto: 'Briefing', feito: true }, { texto: 'Layout', feito: false }] })).json())
+      .toMatchObject({ status: 'andamento', concluida_em: null, checklist: [{ feito: true }, { feito: false }] });
+    const feita = (await patch({ status: 'concluida' })).json();
+    expect(feita.concluida_em).not.toBeNull();
+    expect((await patch({ status: 'aguardando' })).json().concluida_em).toBeNull();
+    expect((await patch({ status: 'inexistente' })).statusCode).toBe(400);
+
+    const nota = await app.inject({ method: 'POST', url: `/v1/demandas/${id}/notas`, headers: AUTH, payload: { texto: 'Cliente mandou as fotos' } });
+    expect(nota.statusCode).toBe(201);
+    const detalhe = (await app.inject({ method: 'GET', url: `/v1/demandas/${id}`, headers: AUTH })).json();
+    expect(detalhe).toMatchObject({ notas: 1, lista_notas: [{ texto: 'Cliente mandou as fotos' }] });
+    // demandas da empresa (para a ficha)
+    expect((await app.inject({ method: 'GET', url: `/v1/demandas?empresa_id=${emp!.id}`, headers: AUTH })).json()).toHaveLength(1);
+
+    await patch({ arquivada: true });
+    expect((await app.inject({ method: 'GET', url: '/v1/demandas', headers: AUTH })).json()).toHaveLength(1);
+    expect((await app.inject({ method: 'DELETE', url: `/v1/demandas/${interna.json().id}`, headers: AUTH })).statusCode).toBe(204);
+    expect((await app.inject({ method: 'GET', url: '/v1/demandas', headers: AUTH })).json()).toHaveLength(0);
+  });
 });
