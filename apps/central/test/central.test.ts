@@ -704,14 +704,20 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(site.statusCode).toBe(201);
     expect(site.json()).toMatchObject({ status: 'a_fazer', empresa_nome: emp!.nome_fantasia, prazo: '2026-12-01', valor: 2500,
       checklist: [{ texto: 'Briefing', feito: false }, { texto: 'Layout', feito: false }] });
-    const interna = await post({ titulo: 'Gravar vídeo do Neo', tipo: 'interno', cliente_nome: 'IONEXT' });
+    const interna = await post({ titulo: 'Gravar vídeo do Neo', tipo: 'interno', cliente_nome: 'IONEXT', prazo: '2026-11-20' });
     expect(interna.json()).toMatchObject({ empresa_id: null, cliente_nome: 'IONEXT', prioridade: 'media' });
-    // a mais nova entra no topo da coluna
+    await post({ titulo: 'Ajustar logo', prioridade: 'baixa', prazo: '2026-11-18' });
+    await post({ titulo: 'Corrigir formulário', prioridade: 'alta', prazo: '2026-12-10' });
+    // ordem na coluna: prioridade (alta → baixa) e, dentro dela, o vencimento mais próximo
     const quadro = (await app.inject({ method: 'GET', url: '/v1/demandas', headers: AUTH })).json();
-    expect(quadro.map((d: { titulo: string }) => d.titulo)).toEqual(['Gravar vídeo do Neo', 'Criar o site']);
+    expect(quadro.map((d: { titulo: string }) => d.titulo)).toEqual(['Corrigir formulário', 'Gravar vídeo do Neo', 'Criar o site', 'Ajustar logo']);
+    await sql`delete from demanda where titulo in ('Ajustar logo', 'Corrigir formulário')`;
 
-    expect((await post({ titulo: '' })).statusCode).toBe(400);
-    expect((await post({ titulo: 'x', empresa_id: '00000000-0000-4000-8000-000000000000' })).statusCode).toBe(422);
+    // vencimento é obrigatório ao criar e não pode ser apagado depois
+    expect((await post({ titulo: 'Sem data' })).statusCode).toBe(400);
+    expect((await post({ titulo: '', prazo: '2026-12-01' })).statusCode).toBe(400);
+    expect((await post({ titulo: 'x', prazo: '2026-12-01', empresa_id: '00000000-0000-4000-8000-000000000000' })).statusCode).toBe(422);
+    expect((await app.inject({ method: 'PATCH', url: `/v1/demandas/${interna.json().id}`, headers: AUTH, payload: { prazo: null } })).statusCode).toBe(400);
 
     const id = site.json().id;
     const patch = (payload: Record<string, unknown>) => app.inject({ method: 'PATCH', url: `/v1/demandas/${id}`, headers: AUTH, payload });

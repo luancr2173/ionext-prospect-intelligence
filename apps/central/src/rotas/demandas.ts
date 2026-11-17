@@ -14,7 +14,7 @@ const campos = {
   prioridade: z.enum(['alta', 'media', 'baixa']),
   empresa_id: z.string().uuid().nullable(),
   cliente_nome: z.string().trim().max(160).nullable(),
-  prazo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  prazo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),  // obrigatório: não dá para apagar o vencimento
   valor: z.number().min(0).max(99_999_999).nullable(),
   checklist: z.array(item).max(50),
   posicao: z.number().finite(),
@@ -36,7 +36,9 @@ export function rotasDemandas(app: FastifyInstance, sql: Sql) {
       select ${colunas(sql)} from demanda d left join empresa e on e.id = d.empresa_id
        where not d.arquivada
          ${q.empresa_id ? sql`and d.empresa_id = ${q.empresa_id}` : sql`and (d.status <> 'concluida' or d.concluida_em > now() - interval '30 days')`}
-       order by d.status, d.posicao, d.criado_em`;
+       -- prioridade (alta → baixa) e, dentro dela, o prazo mais próximo primeiro
+       order by d.status, case d.prioridade when 'alta' then 0 when 'media' then 1 else 2 end,
+                d.prazo nulls last, d.criado_em`;
   });
 
   app.get('/demandas/:id', async (req, reply) => {
@@ -56,7 +58,7 @@ export function rotasDemandas(app: FastifyInstance, sql: Sql) {
       prioridade: campos.prioridade.default('media'),
       empresa_id: campos.empresa_id.optional(),
       cliente_nome: campos.cliente_nome.optional(),
-      prazo: campos.prazo.optional(),
+      prazo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'informe a data de vencimento'),
       valor: campos.valor.optional(),
       checklist: campos.checklist.default([]),
     }).strict().parse(req.body);
@@ -70,7 +72,7 @@ export function rotasDemandas(app: FastifyInstance, sql: Sql) {
     const [d] = await sql`
       insert into demanda (titulo, descricao, tipo, status, prioridade, empresa_id, cliente_nome, prazo, valor, checklist, posicao, concluida_em)
       values (${p.titulo}, ${p.descricao || null}, ${p.tipo}, ${p.status}, ${p.prioridade}, ${p.empresa_id ?? null},
-              ${p.empresa_id ? null : (p.cliente_nome || null)}, ${p.prazo ?? null}, ${p.valor ?? null}, ${sql.json(p.checklist)},
+              ${p.empresa_id ? null : (p.cliente_nome || null)}, ${p.prazo}, ${p.valor ?? null}, ${sql.json(p.checklist)},
               ${(min ?? 1) - 1}, ${p.status === 'concluida' ? sql`now()` : null})
       returning id`;
     const [criada] = await sql`select ${colunas(sql)} from demanda d left join empresa e on e.id = d.empresa_id where d.id = ${d!.id}`;

@@ -911,7 +911,7 @@ function editarDemanda(base = {}) {
     const tipo = sel('dm-tipo', Object.entries(TIPOS_DEMANDA), d.tipo);
     const status = sel('dm-status', COLUNAS_DEMANDA, d.status);
     const prioridade = sel('dm-prio', [['alta', 'Alta'], ['media', 'Média'], ['baixa', 'Baixa']], d.prioridade);
-    const prazo = h('input', { id: 'dm-prazo', type: 'date', value: d.prazo || '' });
+    const prazo = h('input', { id: 'dm-prazo', type: 'date', value: d.prazo || '', required: true });
     const valor = h('input', { id: 'dm-valor', type: 'number', min: '0', step: '50', value: d.valor != null ? String(d.valor) : '', placeholder: 'Opcional' });
 
     // cliente: empresa da base (busca) ou nome livre
@@ -969,9 +969,10 @@ function editarDemanda(base = {}) {
     const salvar = async (ev) => {
       ev.preventDefault();
       if (!titulo.value.trim()) { erro.textContent = 'Dê um título para a demanda.'; titulo.focus(); return; }
+      if (!prazo.value) { erro.textContent = 'Informe a data de vencimento.'; prazo.focus(); return; }
       const corpo = {
         titulo: titulo.value.trim(), descricao: descricao.value.trim() || null, tipo: tipo.value, status: status.value, prioridade: prioridade.value,
-        prazo: prazo.value || null, valor: valor.value === '' ? null : Number(valor.value), checklist,
+        prazo: prazo.value, valor: valor.value === '' ? null : Number(valor.value), checklist,
         empresa_id: empresa ? empresa.id : null, cliente_nome: empresa ? null : (clienteCampo.value.trim() || null),
       };
       try {
@@ -991,7 +992,7 @@ function editarDemanda(base = {}) {
 
     const campo = (rotulo, el, id) => h('div', { class: 'campo' }, h('label', { for: id }, rotulo), el);
     const dlg = h('dialog', { class: 'dialogo dialogo-demanda', 'aria-labelledby': 'dm-tit' },
-      h('form', { method: 'dialog', onsubmit: salvar },
+      h('form', { method: 'dialog', novalidate: true, onsubmit: salvar },
         h('div', { class: 'dm-topo' },
           h('h2', { id: 'dm-tit' }, nova ? 'Nova ' : 'Editar ', h('em', {}, 'demanda')),
           !nova && h('span', { class: 'legenda' }, `Criada ${quando(d.criado_em)}`)),
@@ -999,7 +1000,7 @@ function editarDemanda(base = {}) {
         h('div', { class: 'campo dm-cliente-campo' }, h('label', { for: 'dm-cliente' }, 'Cliente ', marcaBase), clienteCampo, sugestoes),
         h('div', { class: 'dm-grade' },
           campo('Produto / tipo', tipo, 'dm-tipo'), campo('Status', status, 'dm-status'), campo('Prioridade', prioridade, 'dm-prio'),
-          campo('Prazo', prazo, 'dm-prazo'), campo('Valor (R$)', valor, 'dm-valor')),
+          campo('Vencimento *', prazo, 'dm-prazo'), campo('Valor (R$)', valor, 'dm-valor')),
         campo('Descrição', descricao, 'dm-desc'),
         h('div', { class: 'campo' }, h('span', { class: 'rotulo-campo' }, 'Checklist'), listaCheck, novoItem),
         !nova && h('div', { class: 'campo' }, h('span', { class: 'rotulo-campo' }, 'Anotações'),
@@ -1028,9 +1029,9 @@ async function telaDemandas(params) {
 
   const abrir = async (base) => { const r = await editarDemanda(base); if (r) render(); };
 
-  const mover = async (d, status, posicao) => {
+  const mover = async (d, status) => {
     try {
-      await api('PATCH', `/v1/demandas/${d.id}`, { status, posicao });
+      await api('PATCH', `/v1/demandas/${d.id}`, { status });
       if (status !== d.status) aviso(`Movida para “${COLUNAS_DEMANDA.find(([k]) => k === status)[1]}”.`);
       render();
     } catch (e) { aviso(e.message); render(); }
@@ -1062,38 +1063,20 @@ async function telaDemandas(params) {
       menu);
   };
 
-  /** posição para soltar antes do cartão `depois` (ou no fim) dentro da coluna */
-  const posicaoEntre = (col, depoisEl, idArrastado) => {
-    const cards = [...col.querySelectorAll('.card-demanda')].filter((c) => c.dataset.id !== idArrastado);
-    const i = depoisEl ? cards.indexOf(depoisEl) : cards.length;
-    const pos = (c) => porId.get(c.dataset.id).posicao;
-    if (cards.length === 0) return 0;
-    if (i <= 0) return pos(cards[0]) - 1;
-    if (i >= cards.length) return pos(cards[cards.length - 1]) + 1;
-    return (pos(cards[i - 1]) + pos(cards[i])) / 2;
-  };
-
   const coluna = ([status, rotulo]) => {
     const itens = lista.filter((d) => d.status === status && (!filtroTipo || d.tipo === filtroTipo));
     const atrasadas = itens.filter((d) => prazoDemanda(d)?.classe === 'atrasada').length;
     const col = h('section', { class: `coluna dm-coluna dm-${status}`, 'aria-label': rotulo,
-      ondragover: (ev) => {
-        ev.preventDefault(); col.classList.add('alvo');
-        const depois = [...col.querySelectorAll('.card-demanda:not(.arrastando)')].find((c) => { const r = c.getBoundingClientRect(); return ev.clientY < r.top + r.height / 2; });
-        col.querySelectorAll('.marca-soltar').forEach((m) => m.remove());
-        const marca = h('div', { class: 'marca-soltar' });
-        depois ? depois.before(marca) : col.append(marca);
-      },
-      ondragleave: (ev) => { if (!col.contains(ev.relatedTarget)) { col.classList.remove('alvo'); col.querySelectorAll('.marca-soltar').forEach((m) => m.remove()); } },
+      ondragover: (ev) => { ev.preventDefault(); col.classList.add('alvo'); },
+      ondragleave: (ev) => { if (!col.contains(ev.relatedTarget)) col.classList.remove('alvo'); },
       ondrop: (ev) => {
         ev.preventDefault(); col.classList.remove('alvo');
-        const id = ev.dataTransfer.getData('text/plain'); const d = porId.get(id); if (!d) return;
-        const marca = col.querySelector('.marca-soltar');
-        const depois = marca && marca.nextElementSibling && marca.nextElementSibling.classList.contains('card-demanda') ? marca.nextElementSibling : null;
-        const posicao = posicaoEntre(col, depois, id);
+        const id = ev.dataTransfer.getData('text/plain'); const d = porId.get(id);
+        if (!d || d.status === status) return;
+        // a coluna se organiza sozinha (prioridade e vencimento): o cartão entra no lugar certo quando a tela atualiza
         const el = document.querySelector(`.card-demanda[data-id="${id}"]`);
-        if (marca && el) { marca.replaceWith(el); el.classList.remove('arrastando'); el.classList.add('chegou'); col.querySelector('.coluna-vazia')?.remove(); }
-        mover(d, status, posicao);
+        if (el) { col.querySelector('.coluna-vazia')?.remove(); col.querySelector('header').after(el); el.classList.remove('arrastando'); el.classList.add('chegou'); }
+        mover(d, status);
       } },
       h('header', {}, h('span', {}, rotulo), h('span', { class: 'coluna-acoes' },
         atrasadas > 0 && h('span', { class: 'paradas' }, `${atrasadas} atrasada${atrasadas > 1 ? 's' : ''}`),
@@ -1123,7 +1106,7 @@ async function telaDemandas(params) {
       h('div', {},
         h('span', { class: 'indice mono' }, '(06) — Operação'),
         h('h1', {}, 'Deman', h('em', {}, 'das')),
-        h('p', { class: 'legenda' }, 'Trabalhos de cliente e tarefas internas. Arraste os cartões entre as colunas ou clique para editar.')),
+        h('p', { class: 'legenda' }, 'Trabalhos de cliente e tarefas internas. Em cada coluna, primeiro as de prioridade alta e, dentro dela, as que vencem antes. Arraste entre colunas ou clique para editar.')),
       h('button', { class: 'botao azul', type: 'button', onclick: () => abrir({}) }, '+ Nova demanda')),
     kpis,
     h('div', { class: 'linha-filtros' },
