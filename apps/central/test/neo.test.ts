@@ -398,4 +398,21 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     await aprovada('Outra Cliente do Silva', '61 99876-0061', 'cad4');
     expect(await reservar()).toHaveLength(0);
   });
+
+  it('follow-up recusado pela validação não segura as primeiras mensagens', async () => {
+    await cfg('modo_teste', 'false');
+    for (const [i, nome] of ['Clínica F1', 'Clínica F2', 'Clínica F3'].entries()) {
+      await aprovada(nome, `61 99876-007${i}`, `fila${i}`);
+    }
+    const primeiras = await reservar();
+    for (const r of primeiras) await sql`select neo.registrar_envio(${r.envio_id}, 'primeira msg', true)`;
+    await sql`update neo.envio set enviado_em = now() - interval '4 days'`;
+    // os 3 follow-ups falham uma vez
+    for (const f of await reservar()) await sql`select neo.registrar_envio(${f.envio_id}, 'x', false, 'Validação: teste')`;
+    // chega uma aprovada nova: ela sai antes dos follow-ups que já falharam
+    await aprovada('Clínica Nova na Fila', '61 99876-0079', 'fila9');
+    const [prox] = await reservar(1);
+    expect(prox).toMatchObject({ tipo: 'primeira' });
+    expect(prox!.contexto.empresa.nome).toBe('Clínica Nova na Fila');
+  });
 });
