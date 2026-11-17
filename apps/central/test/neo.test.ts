@@ -67,6 +67,7 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(r!.contexto.diagnostico.presenca).toBe('SOMENTE_REDES');
     expect(r!.contexto.diagnostico.redes).toEqual(['https://instagram.com/neo1']);
     expect(r!.contexto.regras.join(' ')).toContain('Não invente');
+    expect(r!.contexto.regras.join(' ')).toContain('não se reapresente');
 
     const [ok] = await sql`select neo.registrar_envio(${r!.envio_id}, 'Olá! Sou o Neo, da IONEXT...', true) as r`;
     expect(ok!.r).toEqual({ ok: true, teste: true });
