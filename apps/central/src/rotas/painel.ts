@@ -262,6 +262,7 @@ export function rotasPainel(app: FastifyInstance, sql: Sql) {
                floor(extract(epoch from now() - o.etapa_desde) / 86400)::int as dias_na_etapa,
                case when o.status in ('nova', 'revisada') then 'revisar' else o.status end as etapa,
                e.id as empresa_id, e.nome_fantasia, e.bairro, e.segmento, ch.canal, ch.telefone,
+               public.oferta_da_oportunidade(o.id) ->> 'produto' as oferta,
                (select max(i.registrado_em) from interacao i where i.oportunidade_id = o.id) as ultima_interacao,
                (select json_build_object('tipo', x.tipo, 'status', x.status, 'quando', coalesce(x.enviado_em, x.reservado_em))
                   from neo.envio x where x.oportunidade_id = o.id and not x.teste

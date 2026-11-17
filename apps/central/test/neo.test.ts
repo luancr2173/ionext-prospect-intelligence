@@ -277,6 +277,20 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     await cfg('portfolio_url', '');
   });
 
+  it('oferta: clínica só com redes → site + agente que agenda; loja de celular só com redes → agente primeiro', async () => {
+    const clinica = await aprovada('Clínica Oferta', '61 99876-0040', 'oferta1');
+    const [a] = await sql`select neo.montar_contexto(${clinica}) as c`;
+    expect(a!.c.oferta).toMatchObject({ produto: 'site', nome: 'site profissional', complementar: { produto: 'agendamento' } });
+    expect(a!.c.oportunidade.objetivo).toBe('apresentar site profissional');
+    const loja = await aprovada('Celulares Oferta', '61 99876-0041', 'oferta2');
+    await sql`update empresa set segmento = 'loja_celular' where id = (select empresa_id from oportunidade where id = ${loja})`;
+    const [b] = await sql`select neo.montar_contexto(${loja}) as c`;
+    expect(b!.c.oferta).toMatchObject({ produto: 'atendimento', complementar: { produto: 'site', nome: 'site profissional' } });
+    expect(b!.c.oferta.ganhos.length).toBe(3);
+    expect(JSON.stringify(b!.c.oferta)).not.toMatch(/\d+ ?%|R\$/);
+    expect(b!.c.regras.join(' ')).toContain('oferta.complementar só se o cliente mostrar interesse');
+  });
+
   it('fora da janela de horário não reserva nada', async () => {
     await aprovada('Clínica Horário', '61 99876-0003', 'hora');
     await cfg('dias_semana', '');

@@ -154,7 +154,8 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
                    o.proposta_valor::float as proposta_valor, o.previsao_fechamento::text as previsao_fechamento,
                    coalesce((select json_agg(json_build_object('id', t.id, 'titulo', t.titulo, 'vence_em', t.vence_em::text,
                                                                'concluida_em', t.concluida_em) order by t.concluida_em nulls first, t.vence_em)
-                               from tarefa t where t.oportunidade_id = o.id), '[]') as tarefas
+                               from tarefa t where t.oportunidade_id = o.id), '[]') as tarefas,
+                   public.oferta_da_oportunidade(o.id) as oferta
             from oportunidade o where o.empresa_id = ${id}`,
       sql`select * from revisao_merge where status = 'pendente' and (empresa_a = ${id} or empresa_b = ${id})`,
       sql`select numero, fonte from neo._whatsapp(${id})`,

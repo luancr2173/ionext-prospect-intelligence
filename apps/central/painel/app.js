@@ -806,6 +806,7 @@ async function telaFunil(params) {
       h('div', { class: 'card-topo' }, h('span', { class: 'card-nome' }, op.nome_fantasia), h('span', { class: 'score' }, op.lead_score ?? '—')),
       h('div', { class: 'item-sub' }, [op.bairro, TIPO_OP[op.tipo]].filter(Boolean).join(' · ')),
       h('div', { class: 'card-linha' }, chipCanal(op.canal, op.telefone), etiquetaPrioridade(op.prioridade)),
+      op.oferta && h('div', { class: 'card-oferta', title: 'O que o Neo oferece primeiro' }, `Oferta: ${OFERTA_CURTA[op.oferta] || op.oferta}`),
       op.etapa === 'reuniao' && op.reuniao_em && h('div', { class: 'card-negocio' }, `Reunião ${diaReuniao(op.reuniao_em)}`),
       ['proposta', 'ganha', 'perdida'].includes(op.etapa) && (op.proposta_valor != null || op.previsao_fechamento) && h('div', { class: 'card-negocio' },
         [op.proposta_valor != null && moeda(op.proposta_valor), op.etapa === 'proposta' && op.previsao_fechamento && `fecha ${dataCurta(op.previsao_fechamento)}`].filter(Boolean).join(' · ')),
@@ -1593,6 +1594,7 @@ async function telaEmpresa(id) {
         op && cartaoTarefas(op),
         cartaoDemandasEmpresa(f.empresa, demandasEmpresa),
         linhaDoTempo(f, op),
+        op && cartaoOferta(op),
         cartaoNeo(f.neo),
         h('div', { class: 'cartao' },
           h('h2', {}, 'Contatos'),
@@ -1661,6 +1663,20 @@ function controleNeo(neo, op) {
         h('button', { class: 'botao pequeno', type: 'button', onclick: pausar(false) }, 'Devolver ao Neo')]
       : [h('div', {}, h('b', {}, 'O Neo está conduzindo.'), h('div', { class: 'item-sub' }, 'Assuma quando quiser falar você mesmo: ele para de responder esta empresa.')),
         h('button', { class: 'botao pequeno azul', type: 'button', onclick: pausar(true) }, 'Assumir conversa')]);
+}
+
+const OFERTA_CURTA = { site: 'site', atendimento: 'agente de atendimento', agendamento: 'agente de agendamento' };
+
+/** O que o Neo oferece primeiro (e o que fica para depois), escolhido pelo tipo de negócio e pela presença digital. */
+function cartaoOferta(op) {
+  const o = op.oferta;
+  if (!o) return null;
+  return h('div', { class: 'cartao' },
+    h('h2', {}, 'Oferta do Neo'),
+    h('p', {}, h('b', {}, o.nome.charAt(0).toUpperCase() + o.nome.slice(1))),
+    h('p', { class: 'legenda' }, o.porque),
+    o.ganhos && h('ul', { class: 'oferta-ganhos' }, o.ganhos.map((g) => h('li', {}, g))),
+    o.complementar && h('p', { class: 'item-sub' }, `Depois, se fizer sentido: ${o.complementar.nome}.`));
 }
 
 function cartaoNeo(neo) {
