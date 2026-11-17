@@ -66,7 +66,9 @@ begin
   ),
   escolhidos as (
     -- quem falhou vai para o fim da fila: um follow-up recusado pela validação não segura as primeiras mensagens
-    select c.* from candidatos c order by c.falhas, (c.tp = 'followup') desc, c.ordem limit least(p_limite, v_restante)
+    select c.* from (select c0.*, row_number() over (partition by c0.tp order by c0.ordem) as vez from candidatos c0) c
+     -- alterna follow-up e primeira mensagem, para nenhum dos dois ficar parado
+     order by c.falhas, c.vez, (c.tp = 'followup') desc, c.ordem limit least(p_limite, v_restante)
   ),
   inseridos as (
     insert into neo.envio (oportunidade_id, tipo, telefone, destino, teste)
