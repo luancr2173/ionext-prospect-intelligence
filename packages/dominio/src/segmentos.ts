@@ -32,6 +32,21 @@ export const SEGMENTOS: Segmento[] = [
     osm: ['office=estate_agent'], palavras: ['imoveis', 'imobiliaria'] },
   { id: 'contabilidade', nome: 'Escritórios de contabilidade', cnaes: ['6920601'],
     osm: ['office=accountant'], palavras: ['contabil', 'contabilidade', 'contadores'] },
+  // Lojistas (varejo local)
+  { id: 'loja_celular', nome: 'Lojas de celular e assistência técnica', cnaes: ['4752100', '9512600'],
+    osm: ['shop=mobile_phone', 'craft=electronics_repair', 'shop=electronics_repair'], palavras: ['cell', 'celular', 'celulares', 'phone', 'iphone', 'smart', 'assistencia', 'tech'] },
+  { id: 'loja_roupas', nome: 'Lojas de roupas', cnaes: ['4781400'],
+    osm: ['shop=clothes', 'shop=boutique'], palavras: ['moda', 'modas', 'store', 'boutique', 'fashion', 'roupas'] },
+  { id: 'otica', nome: 'Óticas', cnaes: ['4774100'],
+    osm: ['shop=optician'], palavras: ['otica', 'oticas', 'optica', 'visao', 'oculos'] },
+  { id: 'pet_shop', nome: 'Pet shops', cnaes: ['4789004'],
+    osm: ['shop=pet'], palavras: ['pet', 'petshop', 'pets', 'animal'] },
+  { id: 'loja_informatica', nome: 'Lojas de informática', cnaes: ['4751201'],
+    osm: ['shop=computer'], palavras: ['informatica', 'tech', 'computadores', 'info', 'notebook'] },
+  { id: 'loja_moveis', nome: 'Lojas de móveis', cnaes: ['4754701'],
+    osm: ['shop=furniture'], palavras: ['moveis', 'decor', 'casa', 'planejados'] },
+  { id: 'loja_cosmeticos', nome: 'Lojas de cosméticos e perfumaria', cnaes: ['4772500'],
+    osm: ['shop=cosmetics', 'shop=perfumery'], palavras: ['cosmeticos', 'perfumaria', 'beauty', 'make', 'perfumes'] },
 ];
 
 export function segmentoPorId(id: string): Segmento | undefined {

@@ -96,7 +96,13 @@ coloque HTTPS na frente e `COOKIE_SEGURO=1`.
    ```
 5. Acompanhe com `cli status` e pela API (`GET /v1/empresas?segmento=clinica_odontologica`).
 
-Segmentos disponíveis: `clinica_odontologica`, `clinica_medica`, `academia`, `restaurante`, `beleza`, `oficina_mecanica`, `construcao_civil`, `imobiliaria`, `contabilidade` (`packages/dominio/src/segmentos.ts`).
+Segmentos disponíveis: `clinica_odontologica`, `clinica_medica`, `academia`, `restaurante`, `beleza`, `oficina_mecanica`, `construcao_civil`, `imobiliaria`, `contabilidade`, e lojistas: `loja_celular` (lojas de celular e assistência técnica), `loja_roupas`, `otica`, `pet_shop`, `loja_informatica`, `loja_moveis`, `loja_cosmeticos` (`packages/dominio/src/segmentos.ts`).
+
+Segmento novo precisa dos dados da Receita: carregue só ele, sem apagar os outros:
+```bash
+pnpm --filter @ionext/motor-prospecting cli carregar-receita --dir ./dados-receita --referencia 2026-10 --uf DF --municipio BRASILIA \
+  --segmentos loja_celular,loja_roupas,otica,pet_shop,loja_informatica,loja_moveis,loja_cosmeticos
+```
 
 ### Verificações (sem nenhuma API paga)
 

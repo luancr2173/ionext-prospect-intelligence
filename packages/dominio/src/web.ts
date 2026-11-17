@@ -56,6 +56,10 @@ const GENERICAS = new Set([
   'comercio', 'empresa', 'cia', 'filial', 'matriz', 'dr', 'dra', 'ss',
   'odontopediatria', 'endodontia', 'implantodontia', 'periodontia', 'protese', 'radiologia', 'radiologica',
   'center', 'clinic', 'clin', 'odontologicos', 'odontologicas', 'especialidades', 'avancada', 'avancado',
+  // lojistas
+  'loja', 'lojas', 'store', 'shop', 'magazine', 'variedades', 'acessorios', 'celular', 'celulares', 'cell', 'phone',
+  'assistencia', 'tecnica', 'eletronicos', 'moda', 'modas', 'fashion', 'boutique', 'roupas', 'otica', 'oticas', 'optica',
+  'pet', 'petshop', 'pets', 'informatica', 'computadores', 'moveis', 'decoracoes', 'cosmeticos', 'perfumaria', 'perfumes',
 ]);
 
 /** Sufixos que aparecem colados a uma sigla no domínio/@: "jc"+"dental", "cob"+"odontologia"+"brasilia". */
