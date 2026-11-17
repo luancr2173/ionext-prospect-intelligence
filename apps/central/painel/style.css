@@ -755,3 +755,7 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .lista-demandas { display: grid; gap: 6px; }
 .linha-demanda { display: grid; gap: 2px; text-align: left; background: none; border: 1px solid var(--linha); border-radius: 10px; padding: 9px 12px; cursor: pointer; color: var(--texto); }
 .linha-demanda:hover { border-color: var(--linha-forte); }
+
+/* lista aberta dos <select>: no Windows ela não herda o tema, e o texto claro sumia no fundo branco */
+select option, select optgroup { background-color: var(--superficie); color: var(--texto); }
+select option:disabled { color: var(--apagado); }
