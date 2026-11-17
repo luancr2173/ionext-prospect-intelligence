@@ -687,3 +687,8 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
   .nc-feito .nc-icone { animation: ncPop .5s var(--suave-saida); }
   @keyframes ncPop { 0% { transform: scale(.5); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: none; } }
 }
+
+.contato small { display: block; }
+.contato .contato-alerta { color: var(--vermelho); margin-top: 3px; }
+.contato .contato-nota { color: var(--ambar); margin-top: 3px; }
+.contato > .etiqueta { flex: none; white-space: nowrap; align-self: flex-start; }

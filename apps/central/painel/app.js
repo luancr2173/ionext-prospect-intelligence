@@ -1357,9 +1357,14 @@ async function telaEmpresa(id) {
           h('h2', {}, 'Contatos'),
           f.contatos.length === 0 ? h('p', { class: 'legenda' }, 'Nenhum contato encontrado.') :
             f.contatos.map((c) => h('div', { class: 'contato' },
-              h('div', {}, h('div', {}, /^https?:/.test(c.valor) ? linkSeguro(c.valor) : c.valor), h('small', {}, `${c.tipo} · fonte: ${c.fonte || '—'}`)),
-              h('span', { class: `etiqueta ${c.publico_comercial ? 'e-ok' : 'e-baixa'}`, title: c.publico_comercial ? '' : 'Pode ser contato pessoal (ex.: MEI). Não usar para abordagem sem confirmar.' },
-                c.publico_comercial ? 'comercial' : 'não confirmar'))),
+              h('div', {}, h('div', {}, /^https?:/.test(c.valor) ? linkSeguro(c.valor) : c.valor),
+                h('small', {}, `${c.tipo} · fonte: ${c.fonte === 'receita' ? 'cadastro da Receita' : (c.fonte || '—')}`),
+                c.suspeito && h('small', { class: 'contato-alerta' }, `Provavelmente não é da empresa: ${c.suspeito}. O Neo não usa este número.`),
+                !c.suspeito && c.fonte === 'receita' && ['telefone', 'whatsapp'].includes(c.tipo) && h('small', { class: 'contato-nota' }, 'Telefone do cadastro: às vezes é do contador. Vale conferir.')),
+              c.suspeito
+                ? h('span', { class: 'etiqueta e-erro' }, 'de terceiro?')
+                : h('span', { class: `etiqueta ${c.publico_comercial ? 'e-ok' : 'e-baixa'}`, title: c.publico_comercial ? '' : 'Pode ser contato pessoal (ex.: MEI). Não usar para abordagem sem confirmar.' },
+                  c.publico_comercial ? 'comercial' : 'não confirmar'))),
           f.validacao.nao_encontrado.length > 0 && h('p', { class: 'ajuda', style: { marginTop: '12px' } },
             `Não encontrado: ${f.validacao.nao_encontrado.map((x) => x.replace('contato.', '')).join(', ')}`)),
         formVerificacaoManual(e.id))));

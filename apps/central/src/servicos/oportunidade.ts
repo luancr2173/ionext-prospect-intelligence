@@ -1,7 +1,7 @@
 import {
   calcularLeadScore, tipoOportunidade, type Classificacao, type ResultadoScore,
 } from '@ionext/dominio';
-import type { Db } from '../db.ts';
+import type { Db, Sql } from '../db.ts';
 
 const SERVICOS: Record<'A' | 'B' | 'C' | 'D', string[]> = {
   A: ['site institucional com CTA para WhatsApp', 'agente de IA para atendimento e qualificação'],
@@ -42,10 +42,15 @@ export async function recalcularOportunidade(db: Db, empresaId: string, hoje = n
     && typeof e.payload.data === 'string' && new Date(e.payload.data) >= limite90);
   const avaliacoes = evid.find((e) => e.fonte === 'manual' && e.payload.tipo === 'avaliacoes');
 
-  const contatos = await db<{ tipo: string; evidencia_id: string }[]>`
-    select tipo, evidencia_id from contato
-     where empresa_id = ${empresaId} and publico_comercial and evidencia_id is not null
-       and tipo in ('telefone', 'whatsapp')`;
+  const contatos = await db<{ tipo: string; evidencia_id: string; fonte: string | null; suspeito: string | null }[]>`
+    select c.tipo, c.evidencia_id, ev.fonte, public.telefone_suspeito(c.empresa_id, c.valor_normalizado) as suspeito
+      from contato c left join evidencia ev on ev.id = c.evidencia_id
+     where c.empresa_id = ${empresaId} and c.publico_comercial and c.evidencia_id is not null
+       and c.tipo in ('telefone', 'whatsapp')`;
+  // melhor telefone: sem suspeita e publicado fora do cadastro > só do cadastro > suspeito
+  const nota = (c: { fonte: string | null; suspeito: string | null }) => (c.suspeito ? 2 : c.fonte === 'receita' ? 1 : 0);
+  const telefone = contatos.filter((c) => c.tipo === 'telefone').sort((a, b) => nota(a) - nota(b))[0];
+  const whatsapp = contatos.filter((c) => c.tipo === 'whatsapp').sort((a, b) => nota(a) - nota(b))[0];
 
   const [seg] = emp.segmento
     ? await db<{ pontos: number }[]>`select pontos from segmento_prioritario where segmento = ${emp.segmento}`
@@ -60,8 +65,9 @@ export async function recalcularOportunidade(db: Db, empresaId: string, hoje = n
       ? { valor: emp.situacao_receita.toUpperCase() === 'ATIVA', evidencia_id: receita.id } : null,
     presencaEmFonteAberta: fonteAberta ? { evidencia_id: fonteAberta.id } : null,
     atividadeRecente: atividade ? { evidencia_id: atividade.id } : null,
-    telefoneComercial: contatos.find((c) => c.tipo === 'telefone') ?? null,
-    whatsappPublicado: contatos.find((c) => c.tipo === 'whatsapp') ?? null,
+    telefoneComercial: telefone
+      ? { evidencia_id: telefone.evidencia_id, origem: telefone.fonte === 'receita' ? 'cadastro' : 'publicado', suspeito: telefone.suspeito } : null,
+    whatsappPublicado: whatsapp ? { evidencia_id: whatsapp.evidencia_id, suspeito: whatsapp.suspeito } : null,
     avaliacoes: avaliacoes && typeof avaliacoes.payload.quantidade === 'number'
       ? { quantidade: avaliacoes.payload.quantidade, evidencia_id: avaliacoes.id } : null,
     dataAbertura: receita && emp.data_abertura ? { data: emp.data_abertura, evidencia_id: receita.id } : null,
@@ -112,4 +118,18 @@ export async function estaEmOptOut(db: Db, empresaId: string): Promise<boolean> 
                            and p.url_site ilike '%' || o.valor || '%')))
     ) as bloqueada`;
   return r?.bloqueada ?? false;
+}
+
+/**
+ * Recalcula o score das oportunidades ainda não abordadas (ex.: depois de mudar uma regra do score).
+ * Idempotente; roda ao ligar a Central. Erros numa empresa não param as outras.
+ */
+export async function recalcularAbertas(db: Sql): Promise<{ total: number; falhas: number }> {
+  const empresas = await db<{ empresa_id: string }[]>`
+    select distinct empresa_id from oportunidade where status in ('nova', 'revisada', 'aprovada_para_contato')`;
+  let falhas = 0;
+  for (const { empresa_id } of empresas) {
+    try { await db.begin((tx) => recalcularOportunidade(tx, empresa_id)); } catch { falhas++; }
+  }
+  return { total: empresas.length, falhas };
 }

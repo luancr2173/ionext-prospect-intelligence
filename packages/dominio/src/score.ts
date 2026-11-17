@@ -10,8 +10,9 @@ export interface EntradaScore {
   situacaoReceitaAtiva?: { valor: boolean; evidencia_id: string } | null;
   presencaEmFonteAberta?: { evidencia_id: string } | null;        // OSM, FSQ OS ou perfil verificado manualmente
   atividadeRecente?: { evidencia_id: string } | null;             // avaliação/post < 90 dias (registro manual)
-  telefoneComercial?: { evidencia_id: string } | null;
-  whatsappPublicado?: { evidencia_id: string } | null;
+  /** origem 'cadastro' = só no cadastro da Receita (muitas vezes é do contador); suspeito = motivo para achar que é de terceiro */
+  telefoneComercial?: { evidencia_id: string; origem?: 'cadastro' | 'publicado'; suspeito?: string | null } | null;
+  whatsappPublicado?: { evidencia_id: string; suspeito?: string | null } | null;
   avaliacoes?: { quantidade: number; evidencia_id: string } | null; // registro manual
   dataAbertura?: { data: string; evidencia_id: string } | null;
   porte?: { valor: 'MEI' | 'ME' | 'EPP' | 'DEMAIS'; evidencia_id: string } | null;
@@ -72,8 +73,12 @@ export function calcularLeadScore(e: EntradaScore): ResultadoScore {
   let pc = 0;
   const mc: string[] = [];
   const ec: string[] = [];
-  if (e.telefoneComercial) { pc += 10; mc.push('telefone comercial publicado'); ec.push(e.telefoneComercial.evidencia_id); }
-  if (e.whatsappPublicado) { pc += 10; mc.push('WhatsApp publicado pela empresa'); ec.push(e.whatsappPublicado.evidencia_id); }
+  const tel = e.telefoneComercial;
+  if (tel?.suspeito) { mc.push(`telefone provavelmente de terceiro: ${tel.suspeito}`); ec.push(tel.evidencia_id); }
+  else if (tel && tel.origem === 'cadastro') { pc += 5; mc.push('telefone só do cadastro na Receita (pode ser do contador)'); ec.push(tel.evidencia_id); }
+  else if (tel) { pc += 10; mc.push('telefone comercial publicado'); ec.push(tel.evidencia_id); }
+  if (e.whatsappPublicado?.suspeito) { mc.push(`WhatsApp provavelmente de terceiro: ${e.whatsappPublicado.suspeito}`); }
+  else if (e.whatsappPublicado) { pc += 10; mc.push('WhatsApp publicado pela empresa'); ec.push(e.whatsappPublicado.evidencia_id); }
   detalhe.push({ criterio: 'contato', pontos: pc, maximo: 20, motivo: mc.join('; ') || 'nenhum canal comercial verificado', evidencia_ids: ec });
 
   // 4. Tração (até 15)

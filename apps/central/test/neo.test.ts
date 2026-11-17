@@ -370,4 +370,32 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect((await sql`select neo.ao_receber('5561911113333', 'Obrigado pelo contato! Em breve retornaremos.') as r`)[0]!.r)
       .toMatchObject({ prospeccao: false, nao_responder: true });
   });
+
+  it('telefone de terceiro: número repetido em outra empresa ou já identificado não vai para o Neo; cadastro vale menos no score', async () => {
+    // só do cadastro da Receita: 5 pontos em vez de 10
+    const op = await aprovada('Clínica Cadastro', '61 99876-0060', 'cad1');
+    const [s1] = await sql`select score_detalhe from oportunidade where id = ${op}`;
+    const contato = s1!.score_detalhe.find((d: { criterio: string }) => d.criterio === 'contato');
+    expect(contato).toMatchObject({ pontos: 5 });
+    expect(contato.motivo).toContain('cadastro na Receita');
+
+    // o mesmo número no cadastro de outra empresa (o contador das duas): ninguém é abordado por ele
+    const op2 = await aprovada('Lanchonete do Mesmo Contador', '61 99876-0060', 'cad2');
+    expect(await reservar()).toHaveLength(0);
+    const [emp] = await sql`select empresa_id from oportunidade where id = ${op2}`;
+    const ficha = (await app.inject({ method: 'GET', url: `/v1/empresas/${emp!.empresa_id}`, headers: AUTH })).json();
+    expect(ficha.contatos.find((c: { tipo: string }) => c.tipo === 'telefone').suspeito).toContain('mais 1 empresa');
+    const [s2] = await sql`select score_detalhe from oportunidade where id = ${op2}`;
+    expect(s2!.score_detalhe.find((d: { criterio: string }) => d.criterio === 'contato')).toMatchObject({ pontos: 0 });
+
+    // número que respondeu como contabilidade entra na lista e trava outras empresas com ele
+    await cfg('modo_teste', 'false');
+    await aprovada('Clínica Sorriso Novo', '61 99876-0061', 'cad3');
+    const [r] = await reservar();
+    await sql`select neo.registrar_envio(${r!.envio_id}, 'Olá! Aqui é o Neo...', true)`;
+    await sql`select neo.ao_receber('5561998760061', 'Bom dia', 'Escritório Contábil Silva')`;
+    expect((await sql`select motivo from telefone_terceiro where numero = '+5561998760061'`)[0]!.motivo).toContain('Escritório Contábil Silva');
+    await aprovada('Outra Cliente do Silva', '61 99876-0061', 'cad4');
+    expect(await reservar()).toHaveLength(0);
+  });
 });

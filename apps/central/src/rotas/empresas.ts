@@ -138,7 +138,8 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
     if (!empresa) return reply.code(404).send({ erro: 'empresa não encontrada' });
 
     const [contatos, identificadores, evidencias, presenca, auditorias, oportunidades, revisoes, whatsapp, envios, pedidoAuditoria, naoContatar] = await Promise.all([
-      sql`select c.tipo, c.valor, c.valor_normalizado, c.publico_comercial, c.evidencia_id, ev.fonte, ev.url as fonte_url
+      sql`select c.tipo, c.valor, c.valor_normalizado, c.publico_comercial, c.evidencia_id, ev.fonte, ev.url as fonte_url,
+                   case when c.tipo in ('telefone', 'whatsapp') then public.telefone_suspeito(c.empresa_id, c.valor_normalizado) end as suspeito
             from contato c left join evidencia ev on ev.id = c.evidencia_id where c.empresa_id = ${id}`,
       sql`select fonte, valor from identificador_externo where empresa_id = ${id}`,
       sql`select id, fonte, url, coletado_em, expira_em, confiabilidade, operador, payload
