@@ -277,18 +277,48 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     await cfg('portfolio_url', '');
   });
 
-  it('oferta: clínica só com redes → site + agente que agenda; loja de celular só com redes → agente primeiro', async () => {
+  it('oferta: clínica só com redes → site + modelo do ramo; loja de roupas só com redes → agente primeiro', async () => {
     const clinica = await aprovada('Clínica Oferta', '61 99876-0040', 'oferta1');
     const [a] = await sql`select neo.montar_contexto(${clinica}) as c`;
     expect(a!.c.oferta).toMatchObject({ produto: 'site', nome: 'site profissional', complementar: { produto: 'agendamento' } });
     expect(a!.c.oportunidade.objetivo).toBe('apresentar site profissional');
-    const loja = await aprovada('Celulares Oferta', '61 99876-0041', 'oferta2');
-    await sql`update empresa set segmento = 'loja_celular' where id = (select empresa_id from oportunidade where id = ${loja})`;
+    expect(a!.c.modelo).toMatchObject({ slug: 'estetica', url: 'https://ionext.vercel.app/modelos/estetica/' });
+    const loja = await aprovada('Roupas Oferta', '61 99876-0041', 'oferta2');
+    await sql`update empresa set segmento = 'loja_roupas' where id = (select empresa_id from oportunidade where id = ${loja})`;
     const [b] = await sql`select neo.montar_contexto(${loja}) as c`;
     expect(b!.c.oferta).toMatchObject({ produto: 'atendimento', complementar: { produto: 'site', nome: 'site profissional' } });
     expect(b!.c.oferta.ganhos.length).toBe(3);
+    expect(b!.c.modelo).toBeNull();
     expect(JSON.stringify(b!.c.oferta)).not.toMatch(/\d+ ?%|R\$/);
     expect(b!.c.regras.join(' ')).toContain('oferta.complementar só se o cliente mostrar interesse');
+  });
+
+  it('modelo do ramo: escolhe pelo nome e pelo CNAE; celular com modelo vira oferta de site', async () => {
+    const casos: [string, string, string | null, string][] = [
+      ['X-Tudo Brasil', 'restaurante', null, 'hamburgueria'],
+      ['Pizzaria da Praça', 'restaurante', null, 'pizzaria'],
+      ['Cantina Bom Sabor', 'restaurante', null, 'restaurante'],
+      ['Ortho Prime Odontologia', 'clinica_odontologica', null, 'ortodontia'],
+      ['Clínica Dente de Leite', 'clinica_odontologica', null, 'odontopediatria'],
+      ['Barbearia Clássica do Zé', 'beleza', null, 'barbearia-classica'],
+      ['Studio Bella Salão', 'beleza', null, 'salao-beleza'],
+      ['Cell Center', 'loja_celular', '9512600', 'assistencia-express'],
+      ['Mundo dos Celulares', 'loja_celular', '4752100', 'loja-smartphones'],
+    ];
+    let i = 0;
+    for (const [nome, seg, cnae, slug] of casos) {
+      const op = await aprovada(nome, `61 99876-07${String(i).padStart(2, '0')}`, `modelo${i++}`);
+      await sql`update empresa set segmento = ${seg}, cnae_principal = ${cnae} where id = (select empresa_id from oportunidade where id = ${op})`;
+      const [r] = await sql`select neo.montar_contexto(${op}) as c`;
+      expect([nome, r!.c.modelo?.slug]).toEqual([nome, slug]);
+      expect(r!.c.oferta.produto).toBe('site');
+    }
+    await cfg('modelos_url', 'https://exemplo.test/m/');
+    const op = await aprovada('Hamburgueria Teste', '61 99876-0799', 'modelo-url');
+    await sql`update empresa set segmento = 'restaurante' where id = (select empresa_id from oportunidade where id = ${op})`;
+    const [r] = await sql`select neo.montar_contexto(${op}) as c`;
+    expect(r!.c.modelo.url).toBe('https://exemplo.test/m/hamburgueria/');
+    await cfg('modelos_url', 'https://ionext.vercel.app/modelos');
   });
 
   it('fora da janela de horário não reserva nada', async () => {
