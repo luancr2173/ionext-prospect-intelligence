@@ -1277,13 +1277,17 @@ function solucaoOrcamento(o, c) {
 }
 
 /** Escolhe a oportunidade e grava valor + solução (e, se quiser, move para Proposta). */
-function usarNaProposta(o, c) {
+function usarNaProposta(o, c, opcoes = {}) {
+  const soOrc = !!opcoes.soOrcamento;
   return new Promise((resolver) => {
     const busca = h('input', { type: 'search', id: 'prop-busca', placeholder: 'Buscar empresa…', autocomplete: 'off' });
     const lista = h('div', { class: 'lista-prop', role: 'listbox', 'aria-label': 'Oportunidades' });
     const opValor = (v, rotulo, marcado) => h('label', { class: 'opcao-radio' },
       h('input', { type: 'radio', name: 'prop-valor', value: String(v), checked: marcado }), rotulo);
     const mover = h('input', { type: 'checkbox', id: 'prop-mover', checked: true });
+    const salvarOrc = h('input', { type: 'checkbox', id: 'prop-orc', checked: true });
+    const corpoOrc = (opId) => ({ oportunidade_id: opId, desconto: { tipo: o.desconto.tipo || 'pct', valor: Number(o.desconto.valor) || 0, mensal: !!o.desconto.mensal },
+      itens: o.itens.filter((i) => Number(i.qtd) > 0).map((i) => ({ servico_id: i.servico_id || null, nome: i.nome, cobranca: i.cobranca, unidade: i.unidade || null, preco: Number(i.preco) || 0, qtd: Math.max(1, Math.floor(Number(i.qtd))) })) });
     const erro = h('div', { class: 'erro', role: 'alert' });
     let escolhida = null;
     const desenhar = (itens) => {
@@ -1303,28 +1307,34 @@ function usarNaProposta(o, c) {
       h('form', { method: 'dialog', onsubmit: async (ev) => {
         ev.preventDefault();
         if (!escolhida) { erro.textContent = 'Escolha a empresa.'; return; }
-        const valor = Number(dlg.querySelector('input[name=prop-valor]:checked').value);
         try {
-          await api('PATCH', `/v1/oportunidades/${escolhida.id}/negocio`, { proposta_valor: valor, proposta_solucao: solucaoOrcamento(o, c) || null });
-          if (mover.checked && ['abordada', 'respondeu', 'reuniao'].includes(escolhida.status)) {
-            await api('PATCH', `/v1/oportunidades/${escolhida.id}`, { status: 'proposta' });
+          if (!soOrc) {
+            const valor = Number(dlg.querySelector('input[name=prop-valor]:checked').value);
+            await api('PATCH', `/v1/oportunidades/${escolhida.id}/negocio`, { proposta_valor: valor, proposta_solucao: solucaoOrcamento(o, c) || null });
+            if (mover.checked && ['abordada', 'respondeu', 'reuniao'].includes(escolhida.status)) {
+              await api('PATCH', `/v1/oportunidades/${escolhida.id}`, { status: 'proposta' });
+            }
           }
+          if (soOrc || salvarOrc.checked) await api('POST', '/v1/orcamentos', corpoOrc(escolhida.id));
           fechar(escolhida);
         } catch (e) { erro.textContent = e.message; }
       } },
-        h('h2', { id: 'dlg-prop-titulo' }, 'Usar numa ', h('em', {}, 'proposta')),
-        h('p', { class: 'legenda' }, 'O valor e a solução vão para o negócio da empresa (aparecem no funil e na ficha).'),
+        soOrc ? h('h2', { id: 'dlg-prop-titulo' }, 'Salvar ', h('em', {}, 'orçamento'))
+          : h('h2', { id: 'dlg-prop-titulo' }, 'Usar numa ', h('em', {}, 'proposta')),
+        h('p', { class: 'legenda' }, soOrc ? 'O orçamento fica em “Orçamentos salvos” como pendente. Quando o cliente aprovar, o contrato sai dele.'
+          : 'O valor e a solução vão para o negócio da empresa (aparecem no funil e na ficha).'),
         h('div', { class: 'campo' }, h('label', { for: 'prop-busca' }, 'Empresa'), busca),
         lista,
-        h('div', { class: 'campo' }, h('span', { class: 'rotulo-campo' }, 'Valor da proposta'),
+        !soOrc && h('div', { class: 'campo' }, h('span', { class: 'rotulo-campo' }, 'Valor da proposta'),
           h('div', { class: 'opcoes-radio' },
             c.totalUnico ? opValor(c.totalUnico, `Implantação · ${moeda(c.totalUnico)}`, true) : null,
             (c.mensal || c.anual) ? opValor(c.primeiroAno, `Primeiro ano · ${moeda(c.primeiroAno)}`, !c.totalUnico) : null)),
-        h('label', { class: 'opcao-radio' }, mover, 'Mover para “Proposta” no funil (se estiver antes)'),
+        !soOrc && h('label', { class: 'opcao-radio' }, mover, 'Mover para “Proposta” no funil (se estiver antes)'),
+        !soOrc && h('label', { class: 'opcao-radio' }, salvarOrc, 'Salvar também em “Orçamentos salvos” (para aprovar e gerar o contrato)'),
         erro,
         h('div', { class: 'acoes' },
           h('button', { class: 'botao pequeno', type: 'button', onclick: () => fechar(null) }, 'Cancelar'),
-          h('button', { class: 'botao pequeno azul', type: 'submit' }, 'Gravar na proposta'))));
+          h('button', { class: 'botao pequeno azul', type: 'submit' }, soOrc ? 'Salvar orçamento' : 'Gravar na proposta'))));
     let feito = false;
     const fechar = (v) => { if (feito) return; feito = true; dlg.close(); dlg.remove(); resolver(v); };
     dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); fechar(null); });
@@ -1333,6 +1343,247 @@ function usarNaProposta(o, c) {
     busca.focus();
     carregar();
   });
+}
+
+// ------------------------------------------------------------------ orçamentos salvos e contrato
+const STATUS_ORC = { pendente: ['Pendente', 'e-alerta'], aprovado: ['Aprovado', 'e-ok'], recusado: ['Recusado', 'e-baixa'] };
+const etiquetaOrc = (s) => h('span', { class: `etiqueta ${(STATUS_ORC[s] || [])[1] || ''}` }, (STATUS_ORC[s] || [s])[0]);
+const totalOrc = (o) => [
+  o.valor_unico ? moeda(o.valor_unico - o.desconto_unico) : null,
+  o.valor_mensal ? `${moeda(o.valor_mensal - o.desconto_mensal)}/mês` : null,
+  o.valor_anual ? `${moeda(o.valor_anual)}/ano` : null].filter(Boolean).join(' + ') || moeda(0);
+
+/** Campo de formulário simples: rótulo + input, com o id usado para marcar o que falta. */
+function campoForm(id, rotulo, valor, extra = {}) {
+  const inp = h(extra.tag || 'input', { id, name: id, value: valor ?? '', autocomplete: 'off', ...extra.attrs });
+  if ((extra.tag || 'input') === 'textarea') inp.value = valor ?? '';
+  const el = h('div', { class: `campo${extra.largo ? ' campo-largo' : ''}`, 'data-campo': id }, h('label', { for: id }, rotulo), inp,
+    extra.ajuda && h('small', { class: 'ajuda' }, extra.ajuda));
+  return { el, inp };
+}
+
+/** Dados da IONEXT como contratada (aparecem em todos os contratos). */
+function editarDadosIonext() {
+  return new Promise(async (resolver) => {
+    let d = {};
+    try { d = await api('GET', '/v1/ionext-dados'); } catch (e) { aviso(e.message); }
+    const campos = [
+      ['razao_social', 'Razão social', { largo: true }], ['cnpj', 'CNPJ'], ['nome_fantasia', 'Nome fantasia'],
+      ['endereco', 'Endereço (rua, número, sala)', { largo: true }], ['cidade', 'Cidade'], ['uf', 'UF', { attrs: { maxlength: '2' } }],
+      ['cep', 'CEP'], ['email', 'E-mail', { attrs: { type: 'email' } }], ['telefone', 'Telefone'],
+      ['representante_nome', 'Quem assina (representante legal)'], ['representante_cpf', 'CPF de quem assina'],
+      ['representante_cargo', 'Cargo (ex.: sócio-administrador)'], ['foro_cidade', 'Foro: cidade', { ajuda: 'Vazio = cidade da IONEXT' }],
+      ['foro_uf', 'Foro: UF', { attrs: { maxlength: '2' } }],
+    ].map(([k, r, x]) => [k, campoForm(`ion-${k}`, r, d[k], x || {})]);
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    const dlg = h('dialog', { class: 'dialogo dialogo-orc', 'aria-labelledby': 'dlg-ion-titulo' },
+      h('form', { method: 'dialog', novalidate: true, onsubmit: async (ev) => {
+        ev.preventDefault();
+        const corpo = Object.fromEntries(campos.map(([k, c]) => [k, c.inp.value.trim() || null]));
+        try { await api('PUT', '/v1/ionext-dados', corpo); aviso('Dados da IONEXT salvos'); fechar(true); }
+        catch (e) { erro.textContent = e.message; }
+      } },
+        h('h2', { id: 'dlg-ion-titulo' }, 'Dados da ', h('em', {}, 'IONEXT')),
+        h('p', { class: 'legenda' }, 'Qualificação da IONEXT como contratada. Vale para todos os contratos gerados.'),
+        h('div', { class: 'grade-campos' }, campos.map(([, c]) => c.el)),
+        erro,
+        h('div', { class: 'acoes' },
+          h('button', { class: 'botao pequeno', type: 'button', onclick: () => fechar(false) }, 'Cancelar'),
+          h('button', { class: 'botao pequeno azul', type: 'submit' }, 'Salvar'))));
+    let feito = false;
+    const fechar = (v) => { if (feito) return; feito = true; dlg.close(); dlg.remove(); resolver(v); };
+    dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); fechar(false); });
+    document.body.append(dlg); dlg.showModal();
+  });
+}
+
+/** Ficha do orçamento salvo: condições, dados do cliente, aprovar/recusar e contrato. */
+function abrirOrcamento(id) {
+  return new Promise(async (resolver) => {
+    let o;
+    try { o = await api('GET', `/v1/orcamentos/${id}`); } catch (e) { aviso(e.message); resolver(false); return; }
+    let mudou = false;
+    const ct = o.contratante || {};
+    const endCadastro = o.empresa_endereco ? [o.empresa_endereco, o.empresa_bairro].filter(Boolean).join(', ') : '';
+    const ph = (v, padrao) => ({ attrs: { placeholder: v ? `Do cadastro: ${v}` : (padrao || '') } });
+    const cond = {
+      forma_pagamento: campoForm('orc-forma', 'Forma de pagamento', o.forma_pagamento, { attrs: { placeholder: 'Ex.: PIX ou boleto bancário' } }),
+      condicao_pagamento: campoForm('orc-cond', 'Condição da implantação', o.condicao_pagamento, { attrs: { placeholder: 'Ex.: 50% na assinatura e 50% na entrega' } }),
+      vencimento_mensal: campoForm('orc-venc', 'Dia de vencimento da mensalidade', o.vencimento_mensal, { attrs: { type: 'number', min: '1', max: '28' } }),
+      prazo_entrega_dias: campoForm('orc-prazo', 'Prazo de entrega (dias corridos)', o.prazo_entrega_dias, { attrs: { type: 'number', min: '1', max: '730' } }),
+      validade: campoForm('orc-validade', 'Validade do orçamento', o.validade, { attrs: { type: 'date' } }),
+      fidelidade_meses: campoForm('orc-fid', 'Fidelidade (meses, 0 = sem)', o.fidelidade_meses, { attrs: { type: 'number', min: '0', max: '60' } }),
+      observacoes: campoForm('orc-obs', 'Observações (entram no contrato)', o.observacoes, { tag: 'textarea', largo: true, attrs: { rows: '2', maxlength: '1000' } }),
+    };
+    if (!o.valor_unico) { cond.condicao_pagamento.el.hidden = true; cond.prazo_entrega_dias.el.hidden = true; }
+    if (!o.valor_mensal) cond.vencimento_mensal.el.hidden = true;
+    const cli = {
+      razao_social: campoForm('cli-razao', 'Razão social (ou nome completo)', ct.razao_social, { largo: true, ...ph(o.empresa_razao_social) }),
+      documento: campoForm('cli-doc', 'CNPJ ou CPF', ct.documento, ph(o.empresa_cnpj && cnpjFmt(o.empresa_cnpj))),
+      email: campoForm('cli-email', 'E-mail', ct.email, { attrs: { type: 'email' } }),
+      endereco: campoForm('cli-end', 'Endereço (rua, número)', ct.endereco, { largo: true, ...ph(endCadastro) }),
+      cidade: campoForm('cli-cidade', 'Cidade', ct.cidade, ph(o.empresa_cidade)),
+      uf: campoForm('cli-uf', 'UF', ct.uf, { attrs: { maxlength: '2', placeholder: o.empresa_uf ? `Do cadastro: ${o.empresa_uf}` : '' } }),
+      cep: campoForm('cli-cep', 'CEP', ct.cep, ph(o.empresa_cep)),
+      representante_nome: campoForm('cli-rep', 'Quem assina pelo cliente', ct.representante_nome),
+      representante_cpf: campoForm('cli-rep-cpf', 'CPF de quem assina', ct.representante_cpf),
+      representante_cargo: campoForm('cli-rep-cargo', 'Cargo (ex.: sócio)', ct.representante_cargo),
+    };
+    const MAPA = { 'contratante.razao_social': cli.razao_social, 'contratante.documento': cli.documento, 'contratante.endereco': cli.endereco,
+      'contratante.cidade': cli.cidade, 'contratante.representante_nome': cli.representante_nome, 'orcamento.forma_pagamento': cond.forma_pagamento,
+      'orcamento.condicao_pagamento': cond.condicao_pagamento, 'orcamento.vencimento_mensal': cond.vencimento_mensal,
+      'orcamento.prazo_entrega_dias': cond.prazo_entrega_dias };
+
+    const topo = h('div', { class: 'orc-topo' });
+    const caixaFalta = h('div', { class: 'faltando', role: 'status', hidden: true });
+    const caixaContrato = h('div', { class: 'contrato-caixa', hidden: true });
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    const acoes = h('div', { class: 'acoes' });
+    const motivo = h('input', { id: 'orc-motivo', maxlength: '300', placeholder: 'Motivo (opcional)' });
+    const linhaMotivo = h('div', { class: 'campo', hidden: true }, h('label', { for: 'orc-motivo' }, 'Por que o cliente recusou?'), motivo);
+
+    const marcarFalta = (faltando) => {
+      Object.values(MAPA).forEach((c) => c.el.classList.remove('campo-faltando'));
+      if (!faltando || !faltando.length) { caixaFalta.hidden = true; return; }
+      faltando.forEach((f) => { const c = MAPA[`${f.grupo}.${f.campo}`]; if (c) c.el.classList.add('campo-faltando'); });
+      const daIonext = faltando.some((f) => f.grupo === 'ionext');
+      caixaFalta.hidden = false;
+      caixaFalta.replaceChildren(...[
+        h('b', {}, o.status === 'aprovado' ? 'Para gerar o contrato, falta:' : 'Para gerar o contrato quando for aprovado, vai faltar:'),
+        h('ul', {}, faltando.map((f) => h('li', {}, f.rotulo))),
+        daIonext && h('button', { type: 'button', class: 'botao pequeno', onclick: async () => {
+          if (await editarDadosIonext()) { o = { ...o, ...(await api('GET', `/v1/orcamentos/${id}`)) }; desenhar(); }
+        } }, 'Preencher dados da IONEXT')].filter(Boolean));
+    };
+    const mostrarContrato = (r) => {
+      if (!o.contrato || o.status !== 'aprovado') { caixaContrato.hidden = true; return; }
+      caixaContrato.hidden = false;
+      const c = o.contrato;
+      caixaContrato.replaceChildren(...[
+        h('div', { class: 'contrato-linha' },
+          h('div', {}, h('b', {}, `Contrato ${c.numero}`), h('div', { class: 'item-sub' }, `versão ${c.versao} · gerado ${quando(c.gerado_em)}`)),
+          h('div', { class: 'acoes' },
+            h('a', { class: 'botao pequeno azul', href: `/v1/contratos/${c.id}/docx`, download: `Contrato-${c.numero}.docx` }, 'Baixar .docx'),
+            h('a', { class: 'botao pequeno', href: `/v1/contratos/${c.id}/pdf`, download: `Contrato-${c.numero}.pdf` }, 'Baixar PDF'))),
+        r && r.pontos_de_atencao && h('details', { class: 'fontes', open: true },
+          h('summary', {}, 'Pontos de atenção antes de assinar'),
+          h('ul', {}, r.pontos_de_atencao.map((p) => h('li', {}, p)))),
+        r && r.dados_usados && h('details', { class: 'fontes' },
+          h('summary', {}, 'Dados usados no contrato'),
+          h('ul', {}, Object.entries(r.dados_usados).filter(([, v]) => v != null && (!Array.isArray(v) || v.length))
+            .map(([k, v]) => h('li', {}, h('b', {}, `${k.replace(/_/g, ' ')}: `), Array.isArray(v) ? v.join('; ') : String(v))))),
+        h('p', { class: 'ajuda' }, 'Contrato gerado automaticamente: revise com um advogado antes de assinar.')].filter(Boolean));
+    };
+
+    const lerForm = () => {
+      const num = (c) => (c.inp.value === '' ? null : Number(c.inp.value));
+      const txt = (c) => c.inp.value.trim() || null;
+      return {
+        forma_pagamento: txt(cond.forma_pagamento), condicao_pagamento: txt(cond.condicao_pagamento),
+        vencimento_mensal: num(cond.vencimento_mensal), prazo_entrega_dias: num(cond.prazo_entrega_dias),
+        validade: cond.validade.inp.value || null, fidelidade_meses: num(cond.fidelidade_meses), observacoes: txt(cond.observacoes),
+        contratante: Object.fromEntries(Object.entries(cli).map(([k, c]) => [k, txt(c)])),
+      };
+    };
+    const salvar = async () => {
+      const r = await api('PATCH', `/v1/orcamentos/${id}`, lerForm());
+      o = { ...o, ...r }; mudou = true;
+      return r;
+    };
+    const status = async (novo) => {
+      erro.textContent = '';
+      try {
+        if (novo === 'aprovado') await salvar();
+        const r = await api('POST', `/v1/orcamentos/${id}/status`, { status: novo, motivo: novo === 'recusado' ? motivo.value.trim() || null : null });
+        o = { ...o, ...r.orcamento, faltando: r.faltando || [] }; mudou = true;
+        if (r.contrato) o.contrato = r.contrato;
+        desenhar(r); dlg.scrollTo({ top: 0, behavior: 'smooth' });
+        if (novo === 'aprovado') aviso(r.contrato ? `Orçamento aprovado e contrato ${r.contrato.numero} gerado` : 'Orçamento aprovado. Complete os dados para gerar o contrato.');
+        else aviso(novo === 'recusado' ? 'Orçamento marcado como recusado' : 'Orçamento voltou para pendente');
+      } catch (e) { erro.textContent = e.message; }
+    };
+    const gerar = async () => {
+      erro.textContent = '';
+      try {
+        await salvar();
+        const r = await fetch(`/v1/orcamentos/${id}/contrato`, { method: 'POST', credentials: 'same-origin', headers: { 'x-painel': '1' } });
+        const dados = await r.json();
+        if (r.status === 422) { o.faltando = dados.faltando; desenhar(); erro.textContent = dados.erro; return; }
+        if (!r.ok) throw new Error(dados.erro || `HTTP ${r.status}`);
+        o.contrato = dados.contrato; o.faltando = [];
+        desenhar(dados); dlg.scrollTo({ top: 0, behavior: 'smooth' }); aviso(`Contrato ${dados.contrato.numero} gerado (versão ${dados.contrato.versao})`);
+      } catch (e) { erro.textContent = e.message; }
+    };
+
+    function desenhar(resultado) {
+      topo.replaceChildren(
+        h('div', {}, h('span', { class: 'indice mono' }, `Orçamento nº ${o.numero}`),
+          h('h2', {}, o.nome_fantasia || o.empresa_razao_social || 'Empresa'),
+          h('div', { class: 'item-sub' }, `${totalOrc(o)} · criado ${quando(o.criado_em)}${o.validade ? ` · válido até ${new Date(`${o.validade}T12:00:00`).toLocaleDateString('pt-BR')}` : ''}`)),
+        etiquetaOrc(o.status));
+      marcarFalta(o.faltando);
+      mostrarContrato(resultado);
+      linhaMotivo.hidden = o.status !== 'pendente';
+      acoes.replaceChildren(...[
+        h('button', { class: 'botao pequeno', type: 'button', onclick: () => fechar() }, 'Fechar'),
+        h('button', { class: 'botao pequeno', type: 'button', onclick: async () => {
+          try { await salvar(); desenhar(); aviso('Orçamento salvo'); } catch (e) { erro.textContent = e.message; }
+        } }, 'Salvar'),
+        o.status === 'pendente' && h('button', { class: 'botao pequeno perigo', type: 'button', onclick: () => status('recusado') }, 'Recusado pelo cliente'),
+        o.status !== 'pendente' && h('button', { class: 'botao-texto', type: 'button', onclick: () => status('pendente') }, 'Voltar para pendente'),
+        o.status === 'pendente' && h('button', { class: 'botao pequeno azul', type: 'button', onclick: () => status('aprovado') }, 'Aprovado: gerar contrato'),
+        o.status === 'aprovado' && h('button', { class: 'botao pequeno azul', type: 'button', onclick: gerar }, o.contrato ? 'Gerar de novo com os dados atuais' : 'Gerar contrato')].filter(Boolean));
+    }
+
+    const itens = h('ul', { class: 'orc-resumo-itens' }, (o.itens || []).map((i) =>
+      h('li', {}, h('span', {}, `${i.nome}${Number(i.qtd) !== 1 ? ` (${i.qtd}x)` : ''}`),
+        h('span', { class: 'num' }, `${moeda(i.preco * i.qtd)}${i.cobranca === 'mensal' ? '/mês' : i.cobranca === 'anual' ? '/ano' : ''}`))));
+    const dlg = h('dialog', { class: 'dialogo dialogo-orc', 'aria-label': `Orçamento ${o.numero}` },
+      h('form', { method: 'dialog', novalidate: true, onsubmit: (ev) => ev.preventDefault() },
+        topo, itens,
+        (o.desconto_unico || o.desconto_mensal) ? h('p', { class: 'ajuda' }, `Desconto: ${[o.desconto_unico ? `${moeda(o.desconto_unico)} na implantação` : null, o.desconto_mensal ? `${moeda(o.desconto_mensal)}/mês` : null].filter(Boolean).join(' e ')}`) : null,
+        caixaContrato, caixaFalta,
+        h('fieldset', { class: 'grupo-campos' }, h('legend', {}, 'Condições'), h('div', { class: 'grade-campos' }, Object.values(cond).map((c) => c.el))),
+        h('fieldset', { class: 'grupo-campos' }, h('legend', {}, 'Cliente (contratante)'),
+          h('p', { class: 'ajuda' }, 'Em branco = usa o cadastro da empresa (mostrado em cinza). Preencha só o que faltar ou estiver diferente.'),
+          h('div', { class: 'grade-campos' }, Object.values(cli).map((c) => c.el))),
+        linhaMotivo, erro, acoes));
+    let feito = false;
+    const fechar = () => { if (feito) return; feito = true; dlg.close(); dlg.remove(); resolver(mudou); };
+    dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); fechar(); });
+    document.body.append(dlg);
+    desenhar();
+    dlg.showModal();
+  });
+}
+
+/** Lista de orçamentos salvos (Precificação). */
+function cartaoOrcamentosSalvos() {
+  const lista = h('div', { class: 'orc-salvos' }, h('p', { class: 'legenda' }, 'Carregando…'));
+  let filtro = '';
+  const carregar = async () => {
+    try {
+      const itens = await api('GET', `/v1/orcamentos${filtro ? `?status=${filtro}` : ''}`);
+      lista.replaceChildren(...(itens.length ? itens.map((o) => h('button', { type: 'button', class: 'orc-salvo', onclick: async () => { if (await abrirOrcamento(o.id)) carregar(); } },
+        h('div', { class: 'orc-salvo-info' },
+          h('span', { class: 'item-titulo' }, o.nome_fantasia || o.empresa_razao_social || 'Empresa'),
+          h('span', { class: 'item-sub' }, [`nº ${o.numero}`, totalOrc(o), o.contrato ? `contrato ${o.contrato.numero}` : null].filter(Boolean).join(' · '))),
+        etiquetaOrc(o.status)))
+        : [h('div', { class: 'hoje-vazio' }, filtro ? 'Nenhum orçamento com esse status.' : 'Nenhum orçamento salvo. Monte um acima e use “Salvar orçamento”.')]));
+    } catch (e) { lista.replaceChildren(h('p', { class: 'erro' }, e.message)); }
+  };
+  const botaoFiltro = (v, rotulo) => h('button', { type: 'button', class: `alternar-op${filtro === v ? ' ativa' : ''}`, 'aria-pressed': String(filtro === v),
+    onclick: (ev) => { filtro = v; ev.currentTarget.parentElement.querySelectorAll('button').forEach((b) => { const on = b === ev.currentTarget; b.classList.toggle('ativa', on); b.setAttribute('aria-pressed', String(on)); }); carregar(); } }, rotulo);
+  carregar();
+  const el = h('div', { class: 'cartao' },
+    h('div', { class: 'titulo-cartao' }, h('h2', { style: { margin: 0 } }, 'Orçamentos ', h('em', {}, 'salvos')),
+      h('button', { type: 'button', class: 'botao-texto', onclick: () => editarDadosIonext() }, 'Dados da IONEXT')),
+    h('p', { class: 'legenda' }, 'Quando o cliente aprovar, marque como aprovado: o contrato sai em .docx e PDF com os dados do orçamento.'),
+    h('div', { class: 'alternar', role: 'group', 'aria-label': 'Filtrar por status' },
+      botaoFiltro('', 'Todos'), botaoFiltro('pendente', 'Pendentes'), botaoFiltro('aprovado', 'Aprovados'), botaoFiltro('recusado', 'Recusados')),
+    lista);
+  el.recarregar = carregar;
+  return el;
 }
 
 async function telaPrecificacao() {
@@ -1463,8 +1714,12 @@ async function telaPrecificacao() {
   const acoesOrc = h('div', { class: 'acoes acoes-orcamento' },
     h('button', { type: 'button', class: 'botao pequeno azul', 'data-precisa': '1', onclick: async () => {
       const op = await usarNaProposta(o, calcularOrcamento(o));
-      if (op) aviso(`Proposta gravada em ${op.nome_fantasia}`);
+      if (op) { aviso(`Proposta gravada em ${op.nome_fantasia}`); salvos.recarregar(); }
     } }, 'Usar numa proposta'),
+    h('button', { type: 'button', class: 'botao pequeno', 'data-precisa': '1', onclick: async () => {
+      const op = await usarNaProposta(o, calcularOrcamento(o), { soOrcamento: true });
+      if (op) { aviso(`Orçamento salvo para ${op.nome_fantasia}`); salvos.recarregar(); }
+    } }, 'Salvar orçamento'),
     h('button', { type: 'button', class: 'botao pequeno', 'data-precisa': '1', onclick: async () => {
       const texto = textoOrcamento(o, calcularOrcamento(o));
       try { await navigator.clipboard.writeText(texto); aviso('Resumo copiado — é só colar no WhatsApp ou e-mail'); }
@@ -1505,6 +1760,7 @@ async function telaPrecificacao() {
       blocoDesconto, totais, acoesOrc);
     desenharTotais();
   }
+  const salvos = cartaoOrcamentosSalvos();
   desenharOrcamento();
 
   $app.replaceChildren(
@@ -1512,7 +1768,7 @@ async function telaPrecificacao() {
       h('span', { class: 'indice mono' }, '(05) — Proposta'),
       h('h1', {}, 'Precifi', h('em', {}, 'cação')),
       h('p', { class: 'legenda' }, 'Produtos prontos, com preço fechado. Some os produtos do cliente, aplique o desconto e leve para a proposta. A faixa de mercado vem de pesquisa com fonte (nov/2026); o seu preço você ajusta clicando nele.'))),
-    h('div', { class: 'grade grade-2 precificacao' }, catalogo, h('div', { class: 'orcamento-coluna' }, cartaoOrc)));
+    h('div', { class: 'grade grade-2 precificacao' }, catalogo, h('div', { class: 'orcamento-coluna' }, cartaoOrc, salvos)));
 }
 
 async function telaEmpresa(id) {

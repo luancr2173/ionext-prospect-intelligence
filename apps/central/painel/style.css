@@ -764,3 +764,32 @@ select option:disabled { color: var(--apagado); }
 .card-oferta { font-size: 12px; color: var(--suave); margin-top: 4px; }
 .oferta-ganhos { margin: 6px 0 8px; padding-left: 18px; }
 .oferta-ganhos li { margin: 2px 0; font-size: 13px; }
+
+/* Orçamentos salvos e contrato */
+.orcamento-coluna { display: grid; gap: 18px; align-content: start; }
+.orc-salvos { display: grid; margin-top: 12px; }
+.orc-salvo { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 12px 0; border: 0; border-top: 1px solid var(--linha); background: none; color: inherit; font: inherit; cursor: pointer; }
+.orc-salvo:first-child { border-top: 0; }
+.orc-salvo:hover .item-titulo, .orc-salvo:focus-visible .item-titulo { color: var(--azul); }
+.orc-salvo-info { display: grid; gap: 2px; min-width: 0; }
+.dialogo-orc { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; }
+.orc-topo { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.orc-topo h2 { margin: 2px 0; }
+.orc-resumo-itens { list-style: none; margin: 0; padding: 0; display: grid; }
+.orc-resumo-itens li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--linha); font-size: 14px; }
+.grade-campos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+.grade-campos .campo-largo { grid-column: 1 / -1; }
+.grade-campos input, .grade-campos textarea { width: 100%; }
+.grupo-campos { border: 1px solid var(--linha); border-radius: 14px; padding: 12px 14px 14px; margin: 0; display: grid; gap: 10px; }
+.grupo-campos legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
+.campo-faltando label { color: var(--ambar); font-weight: 600; }
+.campo-faltando input, .campo-faltando textarea { border-color: var(--ambar); box-shadow: 0 0 0 1px var(--ambar); }
+.faltando { border: 1px solid var(--ambar); background: var(--ambar-fundo); border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; font-size: 14px; }
+.faltando ul { margin: 0; padding-left: 18px; }
+.faltando .botao { justify-self: start; }
+.contrato-caixa { border: 1px solid var(--verde-borda); border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px; }
+.contrato-linha { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.contrato-caixa a.botao { text-decoration: none; }
+.contrato-caixa ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; display: grid; gap: 4px; }
+@media (max-width: 640px) { .grade-campos { grid-template-columns: minmax(0, 1fr); } }

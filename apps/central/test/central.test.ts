@@ -740,4 +740,97 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect((await app.inject({ method: 'DELETE', url: `/v1/demandas/${interna.json().id}`, headers: AUTH })).statusCode).toBe(204);
     expect((await app.inject({ method: 'GET', url: '/v1/demandas', headers: AUTH })).json()).toHaveLength(0);
   });
+
+  it('orçamento → contrato: só aprovado gera; lista o que falta; gera .docx e PDF com os dados do orçamento', async () => {
+    await sql`update ionext_dados set razao_social = null, cnpj = null, endereco = null, cidade = null, uf = null,
+                                      representante_nome = null, foro_cidade = null, foro_uf = null where id = 1`;
+    await ingest([candidata()]);
+    const [emp] = await sql`select id from empresa`;
+    const [op] = await sql`select id from oportunidade where empresa_id = ${emp!.id}`;
+    const [serv] = await sql`select id from servico where chave = 'site_institucional'`;
+    const req = (method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, payload?: unknown) =>
+      app.inject({ method, url, headers: AUTH, ...(payload ? { payload: payload as Record<string, unknown> } : {}) });
+
+    const criado = await req('POST', '/v1/orcamentos', {
+      oportunidade_id: op!.id,
+      itens: [{ servico_id: serv!.id, nome: 'Site institucional', cobranca: 'unico', unidade: 'projeto', preco: 5000, qtd: 1 },
+              { nome: 'Taxa de manutenção do site', cobranca: 'mensal', unidade: 'mes', preco: 250, qtd: 1 }],
+      desconto: { tipo: 'pct', valor: 10, mensal: false },
+    });
+    expect(criado.statusCode).toBe(201);
+    const orc = criado.json();
+    // o servidor refaz a conta e copia a descrição do catálogo
+    expect(orc).toMatchObject({ status: 'pendente', valor_unico: 5000, desconto_unico: 500, valor_mensal: 250, desconto_mensal: 0, contrato: null });
+    expect(orc.itens[0].descricao).toMatch(/Site de 4 a 8 páginas/);
+
+    // pendente: não gera
+    const pend = await req('POST', `/v1/orcamentos/${orc.id}/contrato`);
+    expect(pend.statusCode).toBe(409);
+    expect(pend.json().erro).toMatch(/aprovado/);
+
+    // aprovado sem os dados: fica aprovado e diz exatamente o que falta (não inventa)
+    const ap = await req('POST', `/v1/orcamentos/${orc.id}/status`, { status: 'aprovado' });
+    expect(ap.statusCode).toBe(200);
+    expect(ap.json().orcamento.status).toBe('aprovado');
+    const falta = ap.json().faltando.map((f: { grupo: string; campo: string }) => `${f.grupo}.${f.campo}`);
+    expect(falta).toEqual(expect.arrayContaining(['ionext.razao_social', 'ionext.cnpj', 'contratante.documento', 'contratante.endereco',
+      'contratante.representante_nome', 'orcamento.forma_pagamento', 'orcamento.condicao_pagamento', 'orcamento.vencimento_mensal',
+      'orcamento.prazo_entrega_dias']));
+    expect(falta).not.toContain('contratante.razao_social'); // veio do cadastro (Receita)
+    expect((await req('POST', `/v1/orcamentos/${orc.id}/contrato`)).statusCode).toBe(422);
+
+    // completa os dados
+    expect((await req('PUT', '/v1/ionext-dados', { razao_social: 'IONEXT Tecnologia LTDA', cnpj: '11222333000181', endereco: 'SCS Quadra 2, Bloco C, sala 101',
+      cidade: 'Brasília', uf: 'df', cep: '70300-902', email: 'contato@ionext.com.br', representante_nome: 'Luan Carvalho Ramos',
+      representante_cargo: 'sócio-administrador' })).statusCode).toBe(200);
+    const pat = await req('PATCH', `/v1/orcamentos/${orc.id}`, {
+      forma_pagamento: 'PIX ou boleto bancário', condicao_pagamento: '50% na assinatura e 50% na entrega',
+      vencimento_mensal: 10, prazo_entrega_dias: 30, fidelidade_meses: 12,
+      contratante: { documento: '12.345.678/0001-95', endereco: 'SCLN 405, Bloco A, loja 10, Asa Norte', representante_nome: 'Maria Souza', representante_cpf: '12345678909' },
+    });
+    expect(pat.statusCode).toBe(200);
+    expect(pat.json().faltando).toEqual([]);
+
+    const g = await req('POST', `/v1/orcamentos/${orc.id}/contrato`);
+    expect(g.statusCode).toBe(200);
+    const corpo = g.json();
+    expect(corpo.contrato).toMatchObject({ versao: 1 });
+    expect(corpo.contrato.numero).toMatch(/^CT-\d{4}-\d{4}$/);
+    expect(corpo.dados_usados.implantacao).toContain('4.500,00');
+    expect(corpo.pontos_de_atencao.join(' ')).toMatch(/revisado por um advogado/);
+    // gerar de novo cria nova versão do mesmo contrato
+    expect((await req('POST', `/v1/orcamentos/${orc.id}/contrato`)).json().contrato.versao).toBe(2);
+
+    const docx = await req('GET', `/v1/contratos/${corpo.contrato.id}/docx`);
+    expect(docx.statusCode).toBe(200);
+    expect(docx.headers['content-type']).toContain('wordprocessingml');
+    expect(docx.rawPayload.subarray(0, 2).toString()).toBe('PK');
+    const pdf = await req('GET', `/v1/contratos/${corpo.contrato.id}/pdf`);
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+    if (process.env.SALVAR_CONTRATO) {
+      const fs = await import('node:fs');
+      fs.writeFileSync(`${process.env.SALVAR_CONTRATO}.docx`, docx.rawPayload);
+      fs.writeFileSync(`${process.env.SALVAR_CONTRATO}.pdf`, pdf.rawPayload);
+    }
+
+    // recusado: contrato deixa de ser baixável
+    await req('POST', `/v1/orcamentos/${orc.id}/status`, { status: 'recusado', motivo: 'achou caro' });
+    expect((await req('GET', `/v1/contratos/${corpo.contrato.id}/pdf`)).statusCode).toBe(409);
+    expect((await req('POST', `/v1/orcamentos/${orc.id}/contrato`)).statusCode).toBe(409);
+    await sql`update ionext_dados set razao_social = null, cnpj = null where id = 1`;
+  });
+
+  it('valor por extenso', async () => {
+    const { porExtenso, numeroPorExtenso } = await import('../src/servicos/contrato.ts');
+    expect(porExtenso(4500)).toBe('quatro mil e quinhentos reais');
+    expect(porExtenso(1234.5)).toBe('mil, duzentos e trinta e quatro reais e cinquenta centavos');
+    expect(porExtenso(250)).toBe('duzentos e cinquenta reais');
+    expect(porExtenso(100)).toBe('cem reais');
+    expect(porExtenso(1)).toBe('um real');
+    expect(porExtenso(2_000_000)).toBe('dois milhões de reais');
+    expect(porExtenso(0.01)).toBe('um centavo');
+    expect(numeroPorExtenso(30)).toBe('trinta');
+    expect(numeroPorExtenso(12)).toBe('doze');
+  });
 });

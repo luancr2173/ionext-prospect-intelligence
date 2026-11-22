@@ -12,6 +12,7 @@ import { rotasIngest } from './rotas/ingest.ts';
 import { rotasOptOut } from './rotas/optout.ts';
 import { rotasPainel } from './rotas/painel.ts';
 import { rotasPrecificacao } from './rotas/precificacao.ts';
+import { rotasOrcamentos } from './rotas/orcamentos.ts';
 import { rotasDemandas } from './rotas/demandas.ts';
 import { cookieSair, criarCookieSessao, senhaConfere, sessaoValida } from './sessao.ts';
 
@@ -145,6 +146,7 @@ export function criarApp(sql: Sql, apiKeys: Map<string, string>, opts: OpcoesApp
     rotasPainel(v1, sql);
     rotasAuditorias(v1, sql);
     rotasPrecificacao(v1, sql);
+    rotasOrcamentos(v1, sql);
     rotasDemandas(v1, sql);
   }, { prefix: '/v1' });
 
