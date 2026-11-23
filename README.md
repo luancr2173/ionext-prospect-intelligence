@@ -25,7 +25,7 @@ docs/                   Arquitetura e decisões
 | 2 · Painel (visão geral, funil, ficha, resultados, exportação) | ✅ concluída |
 | 3 · FSQ OS Places + V1/V5 | — |
 | 4 · Motor 02 (auditoria de sites) | ✅ v0.1: PageSpeed + HTML, sem navegador |
-| 5 · Integração com o Neo (n8n) | ✅ prospecção e atendimento (só oportunidade A) |
+| 5 · Integração com o Neo (n8n) | ✅ prospecção e atendimento (oportunidades A, B, C e D) |
 
 ## Rodando localmente
 

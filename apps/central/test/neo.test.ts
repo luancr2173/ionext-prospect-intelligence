@@ -118,12 +118,29 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     await cfg('hora_fim_sabado', '12');
   });
 
-  it('oportunidade com site (B/C/D) não entra na fila do Neo, mesmo aprovada', async () => {
+  it('oportunidade com site (B/C/D) também entra na fila do Neo, com a oferta do tipo', async () => {
     const op = await aprovada('Clínica Tipo B', '61 99876-0050', 'tipob');
     await sql`update oportunidade set tipo = 'B' where id = ${op}`;
-    expect(await reservar()).toHaveLength(0);
-    await sql`update oportunidade set tipo = 'A' where id = ${op}`;
+    const [{ empresa_id }] = await sql`select empresa_id from oportunidade where id = ${op}` as unknown as [{ empresa_id: string }];
+    await sql`update presenca_digital set classificacao = 'SITE_EXISTENTE', url_site = 'https://tipob.com.br' where empresa_id = ${empresa_id}`;
+    await sql`insert into auditoria (empresa_id, url, executada_em, motor_versao, achados, pontos_positivos, classe)
+              values (${empresa_id}, 'https://tipob.com.br', now(), 'audit@test',
+                      ${sql.json([{ codigo: 'muito_lento_celular', titulo: 'Muito lento no celular', gravidade: 'grave' },
+                                  { codigo: 'sem_atendimento_automatico', titulo: 'Sem atendimento automático', gravidade: 'oportunidade' }])},
+                      ${sql.json([{ codigo: 'https', titulo: 'Conexão segura', detalhe: 'O site abre em HTTPS.' }])}, 'B')`;
+    const [r] = await reservar();
+    expect(r!.oportunidade_id).toBe(op);
+    expect(r!.contexto.oferta).toMatchObject({ produto: 'site', nome: 'reformulação do site' });
+    expect(r!.contexto.diagnostico.resumo).toMatch(/tem site próprio/);
+    expect(r!.contexto.diagnostico.auditoria).toEqual({ ponto_positivo: 'O site abre em HTTPS.', melhorias: ['Muito lento no celular'], sem_atendimento_automatico: true });
+  });
+
+  it('empresa com duas oportunidades aprovadas (A e D) recebe uma abordagem só', async () => {
+    const op = await aprovada('Clínica Duas Ops', '61 99876-0051', 'duasops');
+    const [{ empresa_id }] = await sql`select empresa_id from oportunidade where id = ${op}` as unknown as [{ empresa_id: string }];
+    await sql`insert into oportunidade (empresa_id, tipo, status) values (${empresa_id}, 'D', 'aprovada_para_contato')`;
     expect(await reservar()).toHaveLength(1);
+    expect(await reservar()).toHaveLength(0);
   });
 
   it('número sem WhatsApp não volta para a fila', async () => {

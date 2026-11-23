@@ -536,11 +536,13 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(ficha.validacao.fontes).toEqual(expect.arrayContaining(['pagespeed', 'crawler']));
     expect((await reservar()).itens).toHaveLength(0); // auditada há menos de 90 dias
 
-    // o Neo ainda não aborda B/C/D
+    // o Neo também aborda B/C/D
     const apr = await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${op!.id}`, headers: AUTH, payload: { status: 'aprovada_para_contato' } });
-    expect(apr.statusCode).toBe(409);
+    expect(apr.statusCode).toBe(200);
+    expect(apr.json().status).toBe('aprovada_para_contato');
+    await app.inject({ method: 'PATCH', url: `/v1/oportunidades/${op!.id}`, headers: AUTH, payload: { status: 'revisada' } });
     const lote = await app.inject({ method: 'POST', url: '/v1/oportunidades/status-em-lote', headers: AUTH, payload: { ids: [op!.id], status: 'aprovada_para_contato' } });
-    expect(lote.json()).toEqual({ atualizadas: 0 });
+    expect(lote.json()).toEqual({ atualizadas: 1 });
     expect((await app.inject({ method: 'POST', url: '/v1/auditorias', headers: AUTH, payload: { ...diag, motor: 'x' } })).statusCode).toBe(400);
   });
 

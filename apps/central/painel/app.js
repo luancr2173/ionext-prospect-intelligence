@@ -2068,9 +2068,8 @@ function cartaoAcoes(op, empresa, ficha) {
       op.servicos_sugeridos && op.servicos_sugeridos.length ? ` · Sugestão: ${op.servicos_sugeridos.join(', ')}` : ''),
     h('div', { class: 'acoes' },
       // antes do contato: revisar e aprovar para o Neo
-      ['nova', 'revisada'].includes(op.status) && (op.tipo === 'A'
-        ? h('button', { class: 'botao azul', onclick: () => mudar('aprovada_para_contato', 'Aprovada para o Neo.') }, 'Aprovar para o Neo')
-        : h('button', { class: 'botao', disabled: true, title: 'O Neo ainda só aborda empresas sem site. Entre em contato você mesmo, usando o relatório da auditoria.' }, 'Neo: só sem site')),
+      // o Neo aborda todos os tipos (A, B, C e D), cada um com a sua oferta
+      ['nova', 'revisada'].includes(op.status) && h('button', { class: 'botao azul', onclick: () => mudar('aprovada_para_contato', 'Aprovada para o Neo.') }, 'Aprovar para o Neo'),
       op.status === 'nova' && h('button', { class: 'botao', onclick: () => mudar('revisada', 'Marcada como revisada.') }, 'Marcar revisada'),
       op.status === 'aprovada_para_contato' && h('button', { class: 'botao', onclick: () => mudar('revisada', 'Tirada da fila do Neo.') }, 'Tirar da fila do Neo'),
       // depois do contato: etapas do funil
