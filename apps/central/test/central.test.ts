@@ -750,6 +750,49 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect((await app.inject({ method: 'GET', url: '/v1/demandas', headers: AUTH })).json()).toHaveLength(0);
   });
 
+  it('calendário: junta demandas, reuniões do funil e compromissos; Google Agenda espelhado pela função do Jarvis', async () => {
+    await sql`truncate demanda, compromisso cascade`;
+    await ingest([candidata()]);
+    const [emp] = await sql`select id from empresa`;
+    await sql`update oportunidade set status = 'reuniao', reuniao_em = '2026-12-03T14:00:00-03:00' where empresa_id = ${emp!.id}`;
+    const req = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: unknown) =>
+      app.inject({ method, url, headers: AUTH, ...(payload ? { payload } : {}) });
+    await req('POST', '/v1/demandas', { titulo: 'Entregar site', prazo: '2026-12-05' });
+    await req('POST', '/v1/demandas', { titulo: 'Fora do mês', prazo: '2027-02-01' });
+
+    const novo = await req('POST', '/v1/compromissos', { titulo: 'Reunião com contador', inicio: '2026-12-02T10:00:00-03:00', fim: '2026-12-02T11:00:00-03:00' });
+    expect(novo.statusCode).toBe(201);
+    expect(novo.json()).toMatchObject({ tipo: 'reuniao', origem: 'painel', dia_inteiro: false });
+    expect((await req('POST', '/v1/compromissos', { titulo: 'x', inicio: '2026-12-02T10:00:00-03:00', fim: '2026-12-02T09:00:00-03:00' })).statusCode).toBe(422);
+    expect((await req('PATCH', `/v1/compromissos/${novo.json().id}`, { fim: '2026-12-02T09:00:00-03:00' })).statusCode).toBe(422);
+    expect((await req('PATCH', `/v1/compromissos/${novo.json().id}`, { local: 'Escritório', tipo: 'compromisso' })).json())
+      .toMatchObject({ local: 'Escritório', tipo: 'compromisso' });
+
+    // Google Agenda → painel: cria, atualiza pelo id e cancela o que sumiu da janela
+    const sinc = async (eventos: unknown[]) => (await sql`
+      select jarvis.sincronizar_agenda(${sql.json(eventos as never)}, '2026-12-01T00:00:00-03:00', '2027-01-01T00:00:00-03:00') as r`)[0]!.r;
+    expect(await sinc([
+      { id: 'g1', titulo: 'Dentista', inicio: '2026-12-04T08:00:00-03:00', fim: '2026-12-04T09:00:00-03:00' },
+      { id: 'g2', titulo: 'Feriado', inicio: '2026-12-08T00:00:00-03:00', dia_inteiro: true },
+    ])).toMatchObject({ ok: true, recebidos: 2, cancelados: 0 });
+    expect(await sinc([{ id: 'g1', titulo: 'Dentista (remarcado)', inicio: '2026-12-04T15:00:00-03:00' }])).toMatchObject({ recebidos: 1, cancelados: 1 });
+
+    const cal = (await req('GET', '/v1/calendario?de=2026-11-30&ate=2027-01-03')).json();
+    expect(cal.demandas.map((d: { titulo: string }) => d.titulo)).toEqual(['Entregar site']);
+    expect(cal.reunioes).toHaveLength(1);
+    expect(cal.reunioes[0]).toMatchObject({ empresa_id: emp!.id, status: 'reuniao' });
+    expect(cal.compromissos.map((c: { titulo: string }) => c.titulo)).toEqual(['Reunião com contador', 'Dentista (remarcado)']);
+    const [g] = cal.compromissos.filter((c: { origem: string }) => c.origem === 'google');
+    // os do Google são só leitura no painel
+    expect((await req('PATCH', `/v1/compromissos/${g.id}`, { titulo: 'x' })).statusCode).toBe(409);
+    expect((await req('DELETE', `/v1/compromissos/${g.id}`)).statusCode).toBe(409);
+
+    expect((await req('DELETE', `/v1/compromissos/${novo.json().id}`)).statusCode).toBe(204);
+    expect((await req('GET', '/v1/calendario?de=2026-11-30&ate=2027-01-03')).json().compromissos).toHaveLength(1);
+    expect((await req('GET', '/v1/calendario?de=2026-12-10&ate=2026-12-01')).statusCode).toBe(400);
+    expect((await req('GET', '/v1/calendario?de=2026-01-01&ate=2026-12-31')).statusCode).toBe(400);
+  });
+
   it('orçamento → contrato: só aprovado gera; lista o que falta; gera .docx e PDF com os dados do orçamento', async () => {
     await sql`update ionext_dados set razao_social = null, cnpj = null, endereco = null, cidade = null, uf = null,
                                       representante_nome = null, foro_cidade = null, foro_uf = null where id = 1`;

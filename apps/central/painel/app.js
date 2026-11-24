@@ -1136,6 +1136,218 @@ async function telaDemandas(params) {
   $app.classList.add('largo');
 }
 
+// ------------------------------------------------------------------ calendário
+/** Mês a mês: demandas (vencimento), reuniões do funil e compromissos (painel e Google Agenda). */
+const TIPOS_COMPROMISSO = { reuniao: 'Reunião', compromisso: 'Compromisso', lembrete: 'Lembrete' };
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const SEMANA = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
+const isoDia = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const hora = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const CAMADAS_CAL = [['demandas', 'Demandas'], ['reunioes', 'Reuniões do funil'], ['compromissos', 'Compromissos']];
+const CHAVE_CAMADAS = 'ionext-calendario-camadas';
+function lerCamadas() {
+  try { const v = JSON.parse(localStorage.getItem(CHAVE_CAMADAS)); if (Array.isArray(v)) return new Set(v); } catch { /* sem armazenamento */ }
+  return new Set(CAMADAS_CAL.map(([k]) => k));
+}
+
+/** Criar ou editar um compromisso. Resolve com o salvo, 'apagado' ou null. */
+function editarCompromisso(base = {}) {
+  return new Promise((resolver) => {
+    const novo = !base.id;
+    const doGoogle = base.origem === 'google';
+    const c = { tipo: 'reuniao', dia_inteiro: false, ...base };
+    const ini = c.inicio ? new Date(c.inicio) : null;
+    const fimD = c.fim ? new Date(c.fim) : null;
+    const hm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+    const titulo = h('input', { id: 'cp-titulo', maxlength: '200', value: c.titulo || '', placeholder: 'Ex.: Reunião com a Clínica Sorriso', required: true });
+    const tipo = h('select', { id: 'cp-tipo' }, Object.entries(TIPOS_COMPROMISSO).map(([v, r]) => h('option', { value: v, selected: v === c.tipo }, r)));
+    const dia = h('input', { id: 'cp-dia', type: 'date', value: ini ? isoDia(ini) : (c.dia || hojeISO()), required: true });
+    const inicio = h('input', { id: 'cp-inicio', type: 'time', value: ini && !c.dia_inteiro ? hm(ini) : '09:00' });
+    const fim = h('input', { id: 'cp-fim', type: 'time', value: fimD && !c.dia_inteiro ? hm(fimD) : (ini && !c.dia_inteiro ? hm(new Date(ini.getTime() + 3600000)) : '10:00') });
+    const diaInteiro = h('input', { id: 'cp-dia-inteiro', class: 'marcar', type: 'checkbox', checked: !!c.dia_inteiro });
+    const horarios = h('div', { class: 'cp-horas' },
+      h('div', { class: 'campo' }, h('label', { for: 'cp-inicio' }, 'Início'), inicio),
+      h('div', { class: 'campo' }, h('label', { for: 'cp-fim' }, 'Fim'), fim));
+    const ajustarHoras = () => { horarios.hidden = diaInteiro.checked; };
+    diaInteiro.addEventListener('change', ajustarHoras); ajustarHoras();
+    const local = h('input', { id: 'cp-local', maxlength: '300', value: c.local || '', placeholder: 'Endereço ou “online”' });
+    const link = h('input', { id: 'cp-link', type: 'url', maxlength: '1000', value: c.link || '', placeholder: 'https://meet.google.com/…' });
+    const descricao = h('textarea', { id: 'cp-desc', rows: '3', maxlength: '4000', placeholder: 'Pauta, quem vai, o que levar…' }, c.descricao || '');
+    if (doGoogle) [titulo, tipo, dia, inicio, fim, diaInteiro, local, link, descricao].forEach((el) => { el.disabled = true; });
+
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    const salvar = async (ev) => {
+      ev.preventDefault();
+      if (doGoogle) { fechar(null); return; }
+      if (!titulo.value.trim()) { erro.textContent = 'Dê um título.'; titulo.focus(); return; }
+      if (!dia.value) { erro.textContent = 'Informe o dia.'; dia.focus(); return; }
+      let ini2; let fim2 = null;
+      if (diaInteiro.checked) ini2 = new Date(`${dia.value}T00:00`);
+      else {
+        if (!inicio.value) { erro.textContent = 'Informe o horário de início.'; inicio.focus(); return; }
+        ini2 = new Date(`${dia.value}T${inicio.value}`);
+        if (fim.value) {
+          fim2 = new Date(`${dia.value}T${fim.value}`);
+          if (fim2 < ini2) { erro.textContent = 'O fim está antes do início.'; fim.focus(); return; }
+        }
+      }
+      const corpo = { titulo: titulo.value.trim(), tipo: tipo.value, dia_inteiro: diaInteiro.checked, inicio: ini2.toISOString(),
+        fim: fim2 ? fim2.toISOString() : null, local: local.value.trim() || null, link: link.value.trim() || null, descricao: descricao.value.trim() || null };
+      try {
+        const salvo = novo ? await api('POST', '/v1/compromissos', corpo) : await api('PATCH', `/v1/compromissos/${c.id}`, corpo);
+        aviso(novo ? 'Compromisso criado' : 'Compromisso salvo');
+        fechar(salvo);
+      } catch (e) { erro.textContent = e.message; }
+    };
+    const apagar = async (ev) => {
+      const b = ev.currentTarget;
+      if (!b.classList.contains('armado')) { b.classList.add('armado'); b.textContent = 'Confirmar: tirar do calendário'; return; }
+      try { await api('DELETE', `/v1/compromissos/${c.id}`); aviso('Compromisso removido'); fechar('apagado'); } catch (e) { aviso(e.message); }
+    };
+    const campo = (rotulo, el, id) => h('div', { class: 'campo' }, h('label', { for: id }, rotulo), el);
+    const dlg = h('dialog', { class: 'dialogo dialogo-demanda', 'aria-labelledby': 'cp-tit' },
+      h('form', { method: 'dialog', novalidate: true, onsubmit: salvar },
+        h('div', { class: 'dm-topo' }, h('h2', { id: 'cp-tit' }, novo ? 'Novo ' : doGoogle ? '' : 'Editar ', h('em', {}, 'compromisso')),
+          doGoogle && h('span', { class: 'legenda' }, 'Do Google Agenda: para mudar, edite por lá')),
+        campo('Título', titulo, 'cp-titulo'),
+        h('div', { class: 'dm-grade' }, campo('Tipo', tipo, 'cp-tipo'), campo('Dia', dia, 'cp-dia'),
+          h('label', { class: 'cp-check' }, diaInteiro, ' Dia inteiro')),
+        horarios,
+        h('div', { class: 'cp-horas' }, campo('Local', local, 'cp-local'), campo('Link', link, 'cp-link')),
+        campo('Descrição', descricao, 'cp-desc'),
+        c.empresa_id && h('a', { class: 'botao-texto', href: `#/empresa/${c.empresa_id}`, onclick: () => fechar(null) }, `Abrir ficha: ${c.empresa_nome || 'empresa'}`),
+        erro,
+        h('div', { class: 'acoes dm-acoes' },
+          !novo && !doGoogle && h('button', { type: 'button', class: 'botao-texto perigo-texto', onclick: apagar }, 'Tirar do calendário'),
+          h('span', { class: 'espaco' }),
+          h('button', { type: 'button', class: 'botao pequeno', onclick: () => fechar(null) }, doGoogle ? 'Fechar' : 'Cancelar'),
+          !doGoogle && h('button', { type: 'submit', class: 'botao pequeno azul' }, novo ? 'Criar' : 'Salvar'))));
+    let feito = false;
+    const fechar = (v) => { if (feito) return; feito = true; dlg.close(); dlg.remove(); resolver(v); };
+    dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); fechar(null); });
+    document.body.append(dlg);
+    dlg.showModal();
+    if (novo) titulo.focus();
+  });
+}
+
+async function telaCalendario(params) {
+  const hoje = hojeISO();
+  const mesParam = /^\d{4}-\d{2}$/.test(params.get('mes') || '') ? params.get('mes') : hoje.slice(0, 7);
+  const [ano, mes] = mesParam.split('-').map(Number);
+  const primeiro = new Date(ano, mes - 1, 1);
+  const inicioGrade = new Date(ano, mes - 1, 1 - ((primeiro.getDay() + 6) % 7)); // semana começa na segunda
+  const ultimo = new Date(ano, mes, 0);
+  const fimGrade = new Date(ano, mes - 1, ultimo.getDate() + (6 - ((ultimo.getDay() + 6) % 7)));
+  const r = await api('GET', `/v1/calendario?de=${isoDia(inicioGrade)}&ate=${isoDia(fimGrade)}`);
+  atualizarMotor();
+  const camadas = lerCamadas();
+  const diaSel = /^\d{4}-\d{2}-\d{2}$/.test(params.get('dia') || '') ? params.get('dia')
+    : (hoje.startsWith(mesParam) ? hoje : `${mesParam}-01`);
+
+  // eventos por dia (os compromissos de vários dias aparecem em cada dia)
+  const porDia = new Map();
+  const porNoDia = (diaIso, ev) => { if (!porDia.has(diaIso)) porDia.set(diaIso, []); porDia.get(diaIso).push(ev); };
+  for (const d of r.demandas) porNoDia(d.prazo, { camada: 'demandas', ordem: '0', titulo: d.titulo, d,
+    classe: `ev-demanda prio-${d.prioridade}${d.status === 'concluida' ? ' feito' : d.prazo < hoje ? ' atrasada' : ''}` });
+  for (const o of r.reunioes) porNoDia(isoDia(new Date(o.reuniao_em)), { camada: 'reunioes', ordem: `1${o.reuniao_em}`, hora: hora(o.reuniao_em),
+    titulo: `Reunião · ${o.empresa_nome}`, o, classe: 'ev-reuniao' });
+  for (const c of r.compromissos) {
+    const a = new Date(c.inicio); const b = c.fim ? new Date(c.fim) : a;
+    for (let x = new Date(a.getFullYear(), a.getMonth(), a.getDate()); x <= b; x.setDate(x.getDate() + 1)) {
+      if (c.dia_inteiro && c.fim && x >= b && isoDia(x) !== isoDia(a)) break; // fim exclusivo de evento de dia inteiro do Google
+      porNoDia(isoDia(x), { camada: 'compromissos', ordem: c.dia_inteiro ? '0' : `1${c.inicio}`, hora: c.dia_inteiro ? null : hora(c.inicio),
+        titulo: c.titulo, c, classe: `ev-compromisso ev-${c.tipo}${c.origem === 'google' ? ' ev-google' : ''}` });
+      if (isoDia(x) >= isoDia(fimGrade)) break;
+    }
+  }
+  for (const l of porDia.values()) l.sort((x, y) => x.ordem.localeCompare(y.ordem));
+  const visiveis = (diaIso) => (porDia.get(diaIso) || []).filter((e) => camadas.has(e.camada));
+
+  const irPara = (q) => { location.hash = `#/calendario?${new URLSearchParams(q)}`; };
+  const abrirEvento = async (ev) => {
+    if (ev.d) { const res = await editarDemanda({ id: ev.d.id }); if (res) render(); }
+    else if (ev.o) location.hash = `#/empresa/${ev.o.empresa_id}`;
+    else if (ev.c) { const res = await editarCompromisso(ev.c); if (res) render(); }
+  };
+  const novoCompromisso = async (diaIso) => { const res = await editarCompromisso({ dia: diaIso }); if (res) render(); };
+
+  const chip = (ev) => h('button', { type: 'button', class: `ev ${ev.classe}`, title: [ev.hora, ev.titulo].filter(Boolean).join(' · '),
+    onclick: (e) => { e.stopPropagation(); abrirEvento(ev); } },
+    ev.hora && h('span', { class: 'ev-hora mono' }, ev.hora), h('span', { class: 'ev-titulo' }, ev.titulo));
+
+  const MAX = 3;
+  const celulas = [];
+  for (let x = new Date(inicioGrade); x <= fimGrade; x.setDate(x.getDate() + 1)) {
+    const diaIso = isoDia(x);
+    const evs = visiveis(diaIso);
+    const fora = x.getMonth() !== mes - 1;
+    celulas.push(h('div', { class: `cal-dia${fora ? ' fora' : ''}${diaIso === hoje ? ' hoje' : ''}${diaIso === diaSel ? ' sel' : ''}`,
+      role: 'gridcell', tabindex: '0', 'aria-label': `${x.getDate()} de ${MESES[x.getMonth()]}: ${evs.length} ${evs.length === 1 ? 'item' : 'itens'}`,
+      onclick: () => irPara({ mes: mesParam, dia: diaIso }), ondblclick: () => novoCompromisso(diaIso),
+      onkeydown: (e) => { if (e.key === 'Enter') irPara({ mes: mesParam, dia: diaIso }); } },
+      h('div', { class: 'cal-num' }, h('span', {}, x.getDate()), evs.length > 0 && h('span', { class: 'cal-pontos', 'aria-hidden': 'true' },
+        [...new Set(evs.map((e) => e.camada))].map((k) => h('i', { class: `p-${k}` })))),
+      h('div', { class: 'cal-evs' }, evs.slice(0, MAX).map(chip),
+        evs.length > MAX && h('span', { class: 'cal-mais' }, `+${evs.length - MAX}`))));
+  }
+
+  // agenda do dia escolhido
+  const evsDia = visiveis(diaSel);
+  const dSel = new Date(`${diaSel}T12:00`);
+  const linhaDia = (ev) => h('button', { type: 'button', class: `agenda-item ${ev.classe}`, onclick: () => abrirEvento(ev) },
+    h('span', { class: 'agenda-hora mono' }, ev.hora || (ev.d ? 'prazo' : 'dia todo')),
+    h('span', { class: 'agenda-texto' },
+      h('b', {}, ev.titulo),
+      h('small', {}, ev.d ? [COLUNAS_DEMANDA.find(([k]) => k === ev.d.status)?.[1], `prioridade ${ev.d.prioridade === 'media' ? 'média' : ev.d.prioridade}`, ev.d.projeto, ev.d.cliente].filter(Boolean).join(' · ')
+        : ev.o ? 'Marcada no funil · abrir ficha'
+          : [TIPOS_COMPROMISSO[ev.c.tipo], ev.c.fim && !ev.c.dia_inteiro ? `até ${hora(ev.c.fim)}` : null, ev.c.local, ev.c.origem === 'google' ? 'Google Agenda' : null].filter(Boolean).join(' · '))));
+  const agenda = h('aside', { class: 'cartao cal-agenda', 'aria-label': 'Agenda do dia' },
+    h('div', { class: 'cal-agenda-topo' },
+      h('h2', {}, dSel.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })),
+      h('button', { type: 'button', class: 'botao pequeno', onclick: () => novoCompromisso(diaSel) }, '+ Compromisso')),
+    evsDia.length === 0 ? h('p', { class: 'legenda' }, 'Nada marcado neste dia.') : h('div', { class: 'agenda-lista' }, evsDia.map(linhaDia)));
+
+  const mesAnt = new Date(ano, mes - 2, 1); const mesProx = new Date(ano, mes, 1);
+  const ym = (d) => isoDia(d).slice(0, 7);
+  const camada = ([k, rotulo]) => h('button', { type: 'button', class: `cal-camada c-${k}`, 'aria-pressed': camadas.has(k) ? 'true' : 'false',
+    title: camadas.has(k) ? `Esconder ${rotulo.toLowerCase()}` : `Mostrar ${rotulo.toLowerCase()}`, onclick: () => {
+      if (camadas.has(k)) camadas.delete(k); else camadas.add(k);
+      try { localStorage.setItem(CHAVE_CAMADAS, JSON.stringify([...camadas])); } catch { /* sem armazenamento */ }
+      render();
+    } }, h('span', { class: 'cal-bola', 'aria-hidden': 'true' }), rotulo);
+
+  const doMes = (lista, f) => lista.filter((x) => f(x).startsWith(mesParam)).length;
+  const vencendo = r.demandas.filter((d) => d.prazo.startsWith(mesParam) && d.status !== 'concluida').length;
+  const atrasadas = r.demandas.filter((d) => d.prazo.startsWith(mesParam) && d.status !== 'concluida' && d.prazo < hoje).length;
+
+  $app.replaceChildren(
+    h('div', { class: 'cabecalho' },
+      h('div', {},
+        h('span', { class: 'indice mono' }, '(07) — Agenda'),
+        h('h1', {}, 'Calen', h('em', {}, 'dário')),
+        h('p', { class: 'legenda' }, 'Vencimento das demandas, reuniões marcadas no funil e seus compromissos (do painel e do Google Agenda). Clique num dia para ver a agenda; dois cliques criam um compromisso.')),
+      h('button', { class: 'botao azul', type: 'button', onclick: () => novoCompromisso(diaSel) }, '+ Novo compromisso')),
+    h('div', { class: 'dm-resumo' },
+      h('span', {}, h('b', {}, vencendo), ' demandas vencem no mês'),
+      h('span', { class: atrasadas ? 'ruim' : '' }, h('b', {}, atrasadas), ' atrasadas'),
+      h('span', {}, h('b', {}, doMes(r.reunioes, (o) => isoDia(new Date(o.reuniao_em)))), ' reuniões do funil'),
+      h('span', {}, h('b', {}, doMes(r.compromissos, (c) => isoDia(new Date(c.inicio)))), ' compromissos')),
+    h('div', { class: 'linha-filtros cal-barra' },
+      h('div', { class: 'cal-nav' },
+        h('button', { type: 'button', class: 'botao pequeno', 'aria-label': 'Mês anterior', onclick: () => irPara({ mes: ym(mesAnt) }) }, '‹'),
+        h('h2', { class: 'cal-mes' }, `${MESES[mes - 1]} `, h('em', {}, ano)),
+        h('button', { type: 'button', class: 'botao pequeno', 'aria-label': 'Próximo mês', onclick: () => irPara({ mes: ym(mesProx) }) }, '›'),
+        !(hoje.startsWith(mesParam) && diaSel === hoje) && h('button', { type: 'button', class: 'botao-texto', onclick: () => irPara({ mes: hoje.slice(0, 7), dia: hoje }) }, 'Hoje')),
+      h('div', { class: 'cal-camadas' }, CAMADAS_CAL.map(camada))),
+    h('div', { class: 'cal-corpo' },
+      h('div', { class: 'cal-grade', role: 'grid', 'aria-label': `${MESES[mes - 1]} de ${ano}` },
+        SEMANA.map((s) => h('div', { class: 'cal-semana mono', role: 'columnheader' }, s)), celulas),
+      agenda));
+  $app.classList.add('largo');
+}
+
 // ------------------------------------------------------------------ resultados
 /** Do que o Neo abordou: onde respondem, marcam reunião e fecham. Grupos com menos de 10 abordagens aparecem como amostra pequena. */
 async function telaResultados(params) {
@@ -2326,7 +2538,7 @@ async function render() {
   const params = new URLSearchParams(qs || '');
   document.querySelectorAll('.abas a').forEach((a) => a.classList.toggle('ativa',
     (a.dataset.aba === 'inicio' && caminho === '/') || (a.dataset.aba === 'empresas' && caminho.startsWith('/empresa'))
-    || (a.dataset.aba === 'funil' && caminho === '/funil') || (a.dataset.aba === 'resultados' && caminho === '/resultados') || (a.dataset.aba === 'precificacao' && caminho === '/precificacao') || (a.dataset.aba === 'demandas' && caminho === '/demandas')));
+    || (a.dataset.aba === 'funil' && caminho === '/funil') || (a.dataset.aba === 'resultados' && caminho === '/resultados') || (a.dataset.aba === 'precificacao' && caminho === '/precificacao') || (a.dataset.aba === 'demandas' && caminho === '/demandas') || (a.dataset.aba === 'calendario' && caminho === '/calendario')));
   moverIndicador(!primeira);
   // filtro na mesma tela: a pílula vai para a opção clicada na hora, antes dos dados chegarem
   if (filtrando && !semMovimento()) {
@@ -2348,11 +2560,12 @@ async function render() {
     } else if (caminho === '/empresas') await telaEmpresas(params);
     else if (caminho === '/funil') await telaFunil(params);
     else if (caminho === '/demandas') await telaDemandas(params);
+    else if (caminho === '/calendario') await telaCalendario(params);
     else if (caminho === '/resultados') await telaResultados(params);
     else if (caminho === '/precificacao') await telaPrecificacao();
     else if (caminho.startsWith('/empresa/')) await telaEmpresa(caminho.split('/')[2]);
     else location.hash = '#/';
-    if (caminho !== '/funil' && caminho !== '/demandas') $app.classList.remove('largo'); // só depois de a tela nova estar pronta (evita o pulo lateral)
+    if (caminho !== '/funil' && caminho !== '/demandas' && caminho !== '/calendario') $app.classList.remove('largo'); // só depois de a tela nova estar pronta (evita o pulo lateral)
     if (novoEndereco) window.scrollTo({ top: 0 });
     if (entrando) {
       if (!semMovimento()) {

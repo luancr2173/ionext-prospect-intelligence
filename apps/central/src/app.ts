@@ -14,6 +14,7 @@ import { rotasPainel } from './rotas/painel.ts';
 import { rotasPrecificacao } from './rotas/precificacao.ts';
 import { rotasOrcamentos } from './rotas/orcamentos.ts';
 import { rotasDemandas } from './rotas/demandas.ts';
+import { rotasCalendario } from './rotas/calendario.ts';
 import { cookieSair, criarCookieSessao, senhaConfere, sessaoValida } from './sessao.ts';
 
 const PASTA_PAINEL = join(dirname(fileURLToPath(import.meta.url)), '..', 'painel');
@@ -148,6 +149,7 @@ export function criarApp(sql: Sql, apiKeys: Map<string, string>, opts: OpcoesApp
     rotasPrecificacao(v1, sql);
     rotasOrcamentos(v1, sql);
     rotasDemandas(v1, sql);
+    rotasCalendario(v1, sql);
   }, { prefix: '/v1' });
 
   return app;
