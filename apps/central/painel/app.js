@@ -887,6 +887,8 @@ const COLUNAS_DEMANDA = [['a_fazer', 'A fazer'], ['andamento', 'Em andamento'], 
 const TIPOS_DEMANDA = { sites: 'Sites & Landing Pages', atendimento: 'Atendimento', agendamento: 'Agendamento', acompanhamento: 'Acompanhamento',
   dashboards: 'Dashboards', interno: 'Interno', outro: 'Outro' };
 const clienteDemanda = (d) => d.empresa_nome || d.cliente_nome || null;
+// sugestões do campo Projeto (os já usados nas demandas entram junto)
+const PROJETOS_DEMANDA = ['IONEXT Prospect Intelligence', 'Site IONEXT', 'Neo', 'Jarvis'];
 const prazoDemanda = (d) => {
   if (!d.prazo) return null;
   const hoje = hojeISO();
@@ -918,6 +920,15 @@ function editarDemanda(base = {}) {
     const prioridade = sel('dm-prio', [['alta', 'Alta'], ['media', 'Média'], ['baixa', 'Baixa']], d.prioridade);
     const prazo = h('input', { id: 'dm-prazo', type: 'date', value: d.prazo || '', required: true });
     const valor = h('input', { id: 'dm-valor', type: 'number', min: '0', step: '50', value: d.valor != null ? String(d.valor) : '', placeholder: 'Opcional' });
+
+    // projeto: para qual projeto é a demanda (escolhe da lista ou digita um novo)
+    const listaProjetos = h('datalist', { id: 'dm-projetos' }, PROJETOS_DEMANDA.map((p) => h('option', { value: p })));
+    const projeto = h('input', { id: 'dm-projeto', list: 'dm-projetos', autocomplete: 'off', maxlength: '120', value: d.projeto || '',
+      placeholder: 'Ex.: Site IONEXT (escolha ou digite)' });
+    api('GET', '/v1/demandas/projetos').then((usados) => {
+      const todos = [...new Set([...PROJETOS_DEMANDA, ...usados])];
+      listaProjetos.replaceChildren(...todos.map((p) => h('option', { value: p })));
+    }).catch(() => {});
 
     // cliente: empresa da base (busca) ou nome livre
     const clienteCampo = h('input', { id: 'dm-cliente', autocomplete: 'off', maxlength: '160', value: empresa ? empresa.nome_fantasia : (d.cliente_nome || ''),
@@ -979,6 +990,7 @@ function editarDemanda(base = {}) {
         titulo: titulo.value.trim(), descricao: descricao.value.trim() || null, tipo: tipo.value, status: status.value, prioridade: prioridade.value,
         prazo: prazo.value, valor: valor.value === '' ? null : Number(valor.value), checklist,
         empresa_id: empresa ? empresa.id : null, cliente_nome: empresa ? null : (clienteCampo.value.trim() || null),
+        projeto: projeto.value.trim() || null,
       };
       try {
         const salva = nova ? await api('POST', '/v1/demandas', corpo) : await api('PATCH', `/v1/demandas/${d.id}`, corpo);
@@ -1002,6 +1014,7 @@ function editarDemanda(base = {}) {
           h('h2', { id: 'dm-tit' }, nova ? 'Nova ' : 'Editar ', h('em', {}, 'demanda')),
           !nova && h('span', { class: 'legenda' }, `Criada ${quando(d.criado_em)}`)),
         campo('Título', titulo, 'dm-titulo'),
+        h('div', { class: 'campo' }, h('label', { for: 'dm-projeto' }, 'Projeto'), projeto, listaProjetos),
         h('div', { class: 'campo dm-cliente-campo' }, h('label', { for: 'dm-cliente' }, 'Cliente ', marcaBase), clienteCampo, sugestoes),
         h('div', { class: 'dm-grade' },
           campo('Produto / tipo', tipo, 'dm-tipo'), campo('Status', status, 'dm-status'), campo('Prioridade', prioridade, 'dm-prio'),
@@ -1051,12 +1064,12 @@ async function telaDemandas(params) {
       h('option', { value: '' }, 'Mover para…'),
       COLUNAS_DEMANDA.filter(([k]) => k !== d.status).map(([k, r]) => h('option', { value: k }, r)));
     return h('article', { class: `card-op card-demanda prio-${d.prioridade}${p && p.classe === 'atrasada' ? ' parada' : ''}`, draggable: 'true', tabindex: '0',
-      'data-id': d.id, 'data-texto': `${d.titulo} ${clienteDemanda(d) || ''}`.toLowerCase(),
+      'data-id': d.id, 'data-texto': `${d.titulo} ${clienteDemanda(d) || ''} ${d.projeto || ''}`.toLowerCase(),
       ondragstart: (ev) => { ev.dataTransfer.setData('text/plain', d.id); ev.dataTransfer.effectAllowed = 'move'; const el = ev.currentTarget; requestAnimationFrame(() => el.classList.add('arrastando')); },
       ondragend: (ev) => ev.currentTarget.classList.remove('arrastando'),
       onclick: () => abrir(d), onkeydown: (ev) => { if (ev.key === 'Enter') abrir(d); } },
       h('div', { class: 'card-topo' }, h('span', { class: 'card-nome' }, d.titulo), d.prioridade === 'alta' && h('span', { class: 'etiqueta e-alta' }, 'Alta')),
-      clienteDemanda(d) && h('div', { class: 'item-sub' }, clienteDemanda(d)),
+      (d.projeto || clienteDemanda(d)) && h('div', { class: 'item-sub' }, [d.projeto, clienteDemanda(d)].filter(Boolean).join(' · ')),
       h('div', { class: 'card-linha' },
         h('span', { class: `chip-tipo tipo-${d.tipo}` }, TIPOS_DEMANDA[d.tipo]),
         d.valor != null && h('span', { class: 'card-valor' }, moeda(d.valor))),

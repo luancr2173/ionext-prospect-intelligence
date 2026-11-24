@@ -706,8 +706,15 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(site.statusCode).toBe(201);
     expect(site.json()).toMatchObject({ status: 'a_fazer', empresa_nome: emp!.nome_fantasia, prazo: '2026-12-01', valor: 2500,
       checklist: [{ texto: 'Briefing', feito: false }, { texto: 'Layout', feito: false }] });
-    const interna = await post({ titulo: 'Gravar vídeo do Neo', tipo: 'interno', cliente_nome: 'IONEXT', prazo: '2026-11-20' });
-    expect(interna.json()).toMatchObject({ empresa_id: null, cliente_nome: 'IONEXT', prioridade: 'media' });
+    const interna = await post({ titulo: 'Gravar vídeo do Neo', tipo: 'interno', cliente_nome: 'IONEXT', projeto: 'Neo', prazo: '2026-11-20' });
+    expect(interna.json()).toMatchObject({ empresa_id: null, cliente_nome: 'IONEXT', projeto: 'Neo', prioridade: 'media' });
+    expect(site.json().projeto).toBeNull();
+    // projetos já usados (sugestões do campo Projeto); vazio no PATCH limpa
+    expect((await app.inject({ method: 'GET', url: '/v1/demandas/projetos', headers: AUTH })).json()).toEqual(['Neo']);
+    expect((await app.inject({ method: 'PATCH', url: `/v1/demandas/${site.json().id}`, headers: AUTH, payload: { projeto: 'Site IONEXT' } })).json())
+      .toMatchObject({ projeto: 'Site IONEXT' });
+    expect((await app.inject({ method: 'PATCH', url: `/v1/demandas/${site.json().id}`, headers: AUTH, payload: { projeto: '' } })).json())
+      .toMatchObject({ projeto: null });
     await post({ titulo: 'Ajustar logo', prioridade: 'baixa', prazo: '2026-11-18' });
     await post({ titulo: 'Corrigir formulário', prioridade: 'alta', prazo: '2026-12-10' });
     // ordem na coluna: prioridade (alta → baixa) e, dentro dela, o vencimento mais próximo

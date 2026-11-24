@@ -14,6 +14,7 @@ const campos = {
   prioridade: z.enum(['alta', 'media', 'baixa']),
   empresa_id: z.string().uuid().nullable(),
   cliente_nome: z.string().trim().max(160).nullable(),
+  projeto: z.string().trim().max(120).nullable(),  // para qual projeto é a demanda (ex.: Site IONEXT)
   prazo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),  // obrigatório: não dá para apagar o vencimento
   valor: z.number().min(0).max(99_999_999).nullable(),
   checklist: z.array(item).max(50),
@@ -22,7 +23,7 @@ const campos = {
 };
 
 const colunas = (sql: Sql) => sql`
-  d.id, d.titulo, d.descricao, d.tipo, d.status, d.prioridade, d.empresa_id, d.cliente_nome,
+  d.id, d.titulo, d.descricao, d.tipo, d.status, d.prioridade, d.empresa_id, d.cliente_nome, d.projeto,
   to_char(d.prazo, 'YYYY-MM-DD') as prazo, d.valor::float as valor, d.checklist, d.posicao, d.arquivada,
   d.concluida_em, d.criado_em, d.atualizado_em, e.nome_fantasia as empresa_nome,
   (select count(*)::int from demanda_nota n where n.demanda_id = d.id) as notas`;
@@ -39,6 +40,13 @@ export function rotasDemandas(app: FastifyInstance, sql: Sql) {
        -- prioridade (alta → baixa) e, dentro dela, o prazo mais próximo primeiro
        order by d.status, case d.prioridade when 'alta' then 0 when 'media' then 1 else 2 end,
                 d.prazo nulls last, d.criado_em`;
+  });
+
+  /** Projetos já usados nas demandas (para sugerir no campo Projeto). */
+  app.get('/demandas/projetos', async () => {
+    const r = await sql<{ projeto: string }[]>`
+      select projeto from demanda where projeto is not null group by projeto order by max(atualizado_em) desc limit 50`;
+    return r.map((x) => x.projeto);
   });
 
   app.get('/demandas/:id', async (req, reply) => {
@@ -58,6 +66,7 @@ export function rotasDemandas(app: FastifyInstance, sql: Sql) {
       prioridade: campos.prioridade.default('media'),
       empresa_id: campos.empresa_id.optional(),
       cliente_nome: campos.cliente_nome.optional(),
+      projeto: campos.projeto.optional(),
       prazo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'informe a data de vencimento'),
       valor: campos.valor.optional(),
       checklist: campos.checklist.default([]),
@@ -70,9 +79,9 @@ export function rotasDemandas(app: FastifyInstance, sql: Sql) {
     const [topo] = await sql<{ min: number | null }[]>`select min(posicao) as min from demanda where status = ${p.status} and not arquivada`;
     const min = topo?.min ?? null;
     const [d] = await sql`
-      insert into demanda (titulo, descricao, tipo, status, prioridade, empresa_id, cliente_nome, prazo, valor, checklist, posicao, concluida_em)
+      insert into demanda (titulo, descricao, tipo, status, prioridade, empresa_id, cliente_nome, projeto, prazo, valor, checklist, posicao, concluida_em)
       values (${p.titulo}, ${p.descricao || null}, ${p.tipo}, ${p.status}, ${p.prioridade}, ${p.empresa_id ?? null},
-              ${p.empresa_id ? null : (p.cliente_nome || null)}, ${p.prazo}, ${p.valor ?? null}, ${sql.json(p.checklist)},
+              ${p.empresa_id ? null : (p.cliente_nome || null)}, ${p.projeto || null}, ${p.prazo}, ${p.valor ?? null}, ${sql.json(p.checklist)},
               ${(min ?? 1) - 1}, ${p.status === 'concluida' ? sql`now()` : null})
       returning id`;
     const [criada] = await sql`select ${colunas(sql)} from demanda d left join empresa e on e.id = d.empresa_id where d.id = ${d!.id}`;
@@ -86,6 +95,7 @@ export function rotasDemandas(app: FastifyInstance, sql: Sql) {
     const mudancas: Record<string, unknown> = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined));
     if (Object.keys(mudancas).length === 0) return reply.code(400).send({ erro: 'nada para atualizar' });
     if (mudancas.descricao === '') mudancas.descricao = null;
+    if (mudancas.projeto === '') mudancas.projeto = null;
     if (mudancas.empresa_id) mudancas.cliente_nome = null;
     if (mudancas.checklist) mudancas.checklist = sql.json(mudancas.checklist as never);
 
