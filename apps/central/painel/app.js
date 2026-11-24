@@ -226,7 +226,8 @@ async function atualizarMotor() {
     const m = (r.motores || []).find((x) => x.nome === 'motor-prospecting');
     const online = m && m.segundos_atras < 90;
     el.className = `motor ${online ? 'online' : 'offline'}`;
-    const partes = [online ? 'Motor 01 rodando' : 'Motor 01 parado'];
+    const estado = online ? 'Motor 01 rodando' : 'Motor 01 parado';
+    const partes = [];
     if (m) {
       for (const p of m.dados.busca_web || []) partes.push(`${p.provedor} ${p.usadas}/${p.limite}`);
       const fila = m.dados.fila_claude || {};
@@ -236,7 +237,9 @@ async function atualizarMotor() {
     const auOnline = au && au.segundos_atras < 120;
     partes.push(!auOnline ? 'auditoria parada' : au.dados.na_fila ? `auditoria: ${au.dados.na_fila} na fila` : 'auditoria em dia');
     el.title = `Motor 01 (prospecção): ${online ? 'rodando' : 'parado'} · Motor 02 (auditoria de sites): ${auOnline ? `rodando, PageSpeed ${au.dados.pagespeed || ''}` : 'parado'}`;
-    el.querySelector('.motor-texto').textContent = partes.join(' · ');
+    el.querySelector('.motor-texto').textContent = estado;
+    el.querySelector('.motor-extra').textContent = partes.length ? ` · ${partes.join(' · ')}` : '';
+    el.title += ` · ${partes.join(' · ')}`;
     return r;
   } catch { el.className = 'motor offline'; return null; }
 }
@@ -291,7 +294,7 @@ async function telaInicio() {
       kpi('Alta prioridade', t.alta_prioridade, 'score 70 ou mais'),
       kpi('Aguardando sua revisão', t.aguardando_revisao, t.aprovadas ? `${t.aprovadas} já aprovadas para o Neo` : 'nenhuma aprovada ainda')),
 
-    h('div', { class: 'grade grade-2', style: { marginTop: '16px' } },
+    h('div', { class: 'grade grade-2 estica', style: { marginTop: '16px' } },
       h('div', { class: 'pilha' }, cartaoOptOutRevisar(optouts), cartaoHoje(hoje, respostas), cartaoRespostas(respostas)),
       cartaoConversao(resumo.funil, resumo.valores, resumo.perdas)),
 
@@ -805,17 +808,18 @@ async function telaFunil(params) {
     },
       h('div', { class: 'card-topo' }, h('span', { class: 'card-nome' }, op.nome_fantasia), h('span', { class: 'score' }, op.lead_score ?? '—')),
       h('div', { class: 'item-sub' }, [op.bairro, TIPO_OP[op.tipo]].filter(Boolean).join(' · ')),
-      h('div', { class: 'card-linha' }, chipCanal(op.canal, op.telefone), etiquetaPrioridade(op.prioridade)),
-      op.oferta && h('div', { class: 'card-oferta', title: 'O que o Neo oferece primeiro' }, `Oferta: ${OFERTA_CURTA[op.oferta] || op.oferta}`),
+      h('div', { class: 'card-linha' }, chipCanal(op.canal, op.telefone), etiquetaPrioridade(op.prioridade),
+        op.oferta && h('span', { class: 'card-oferta', title: 'O que o Neo oferece primeiro' }, `Oferta: ${OFERTA_CURTA[op.oferta] || op.oferta}`)),
       op.etapa === 'reuniao' && op.reuniao_em && h('div', { class: 'card-negocio' }, `Reunião ${diaReuniao(op.reuniao_em)}`),
       ['proposta', 'ganha', 'perdida'].includes(op.etapa) && (op.proposta_valor != null || op.previsao_fechamento) && h('div', { class: 'card-negocio' },
         [op.proposta_valor != null && moeda(op.proposta_valor), op.etapa === 'proposta' && op.previsao_fechamento && `fecha ${dataCurta(op.previsao_fechamento)}`].filter(Boolean).join(' · ')),
       op.etapa === 'perdida' && op.motivo_perda && h('div', { class: 'card-negocio' }, `Motivo: ${MOTIVOS_PERDA[op.motivo_perda].toLowerCase()}`),
       op.neo_pausado_em ? h('div', { class: 'card-neo assumida' }, 'Conversa com você') : linhaNeo && h('div', { class: 'card-neo' }, linhaNeo),
-      h('div', { class: 'dias', title: `Nesta etapa desde ${quando(op.etapa_desde)}` },
-        parada(op) ? `Parada · ${op.dias_na_etapa} d` : `Na etapa · ${diasTexto(op.dias_na_etapa)}`),
       op.ultima_interacao && h('div', { class: 'card-neo' }, `Última interação ${relativo(op.ultima_interacao)}`),
-      menu);
+      h('div', { class: 'card-pe' },
+        h('span', { class: 'dias', title: `Nesta etapa desde ${quando(op.etapa_desde)}` },
+          parada(op) ? `Parada · ${op.dias_na_etapa} d` : `Na etapa · ${diasTexto(op.dias_na_etapa)}`),
+        menu));
   };
 
   const porId = new Map();
@@ -1056,12 +1060,13 @@ async function telaDemandas(params) {
       h('div', { class: 'card-linha' },
         h('span', { class: `chip-tipo tipo-${d.tipo}` }, TIPOS_DEMANDA[d.tipo]),
         d.valor != null && h('span', { class: 'card-valor' }, moeda(d.valor))),
-      (p || total || d.notas) && h('div', { class: 'card-rodape' },
-        p && h('span', { class: `prazo ${p.classe}` }, p.texto),
-        total > 0 && h('span', { class: `dm-progresso${feitos === total ? ' completo' : ''}`, title: 'Checklist' },
-          h('span', { class: 'dm-barra' }, h('span', { style: { width: `${Math.round((feitos / total) * 100)}%` } })), `${feitos}/${total}`),
-        d.notas > 0 && h('span', { class: 'n-notas', title: 'Anotações' }, `${d.notas} nota${d.notas > 1 ? 's' : ''}`)),
-      menu);
+      h('div', { class: 'card-pe' },
+        h('div', { class: 'card-rodape' },
+          p && h('span', { class: `prazo ${p.classe}` }, p.texto),
+          total > 0 && h('span', { class: `dm-progresso${feitos === total ? ' completo' : ''}`, title: 'Checklist' },
+            h('span', { class: 'dm-barra' }, h('span', { style: { width: `${Math.round((feitos / total) * 100)}%` } })), `${feitos}/${total}`),
+          d.notas > 0 && h('span', { class: 'n-notas', title: 'Anotações' }, `${d.notas} nota${d.notas > 1 ? 's' : ''}`)),
+        menu));
   };
 
   const coluna = ([status, rotulo]) => {
@@ -1655,7 +1660,7 @@ async function telaPrecificacao() {
       servicos.push(s); adicionar(s); render();
     } catch (e) { aviso(e.message); }
   } },
-    h('div', { class: 'campo' }, h('label', { for: 'novo-serv-nome' }, 'Serviço que não está na lista'), novoNome),
+    h('div', { class: 'campo novo-servico-nome' }, h('label', { for: 'novo-serv-nome' }, 'Serviço que não está na lista'), novoNome),
     h('div', { class: 'campo' }, h('label', { for: 'novo-serv-cob' }, 'Cobrança'), novoCob),
     h('div', { class: 'campo' }, h('label', { for: 'novo-serv-preco' }, 'Preço (R$)'), novoPreco),
     h('button', { class: 'botao pequeno', type: 'submit' }, 'Criar e adicionar'));

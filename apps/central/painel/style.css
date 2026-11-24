@@ -587,7 +587,7 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .positivos { display: flex; flex-wrap: wrap; gap: 6px; }
 @media (max-width: 700px) { .psi { grid-template-columns: 1fr; } .prints { flex-direction: column; } .print-desktop { width: 100%; } }
 .evid > div { min-width: 0; overflow-wrap: anywhere; }
-@media (max-width: 560px) { .motor .motor-texto { display: none; } }
+@media (max-width: 560px) { .motor .motor-texto, .motor .motor-extra { display: none; } }
 
 /* ---------------------------------------------------------------- precificação */
 .precificacao { align-items: start; }
@@ -749,7 +749,8 @@ html.revelando-tema::view-transition-new(root) { animation: revelar .65s var(--s
 .dm-acoes .espaco { flex: 1; }
 .perigo-texto { color: var(--vermelho); }
 .perigo-texto.armado { font-weight: 600; }
-@media (max-width: 1480px) and (min-width: 561px) { .motor .motor-texto { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; } }
+/* status do motor: o estado sempre aparece; cotas e fila só com espaço (o resto fica no title) */
+@media (max-width: 1480px) { .motor .motor-extra { display: none; } }
 @media (max-width: 1300px) { .motor .motor-texto { display: none; } }
 
 .lista-demandas { display: grid; gap: 6px; }
@@ -761,7 +762,7 @@ select option, select optgroup { background-color: var(--superficie); color: var
 select option:disabled { color: var(--apagado); }
 
 /* Oferta do Neo */
-.card-oferta { font-size: 12px; color: var(--suave); margin-top: 4px; }
+.card-oferta { font-size: 12px; color: var(--suave); }
 .oferta-ganhos { margin: 6px 0 8px; padding-left: 18px; }
 .oferta-ganhos li { margin: 2px 0; font-size: 13px; }
 
@@ -793,3 +794,40 @@ select option:disabled { color: var(--apagado); }
 .contrato-caixa a.botao { text-decoration: none; }
 .contrato-caixa ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; display: grid; gap: 4px; }
 @media (max-width: 640px) { .grade-campos { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------------------------------------------------------------- refino de layout (Gestalt: proximidade, região comum, alinhamento) */
+/* colunas do kanban: cartões sempre a partir do topo, cabeçalhos alinhados mesmo com a coluna vazia */
+.coluna { align-content: start; }
+/* "Para hoje / Respostas" e "Conversão" fecham o mesmo bloco, sem buraco ao lado */
+.grade-2.estica { align-items: stretch; }
+.grade-2.estica > .cartao { display: flex; flex-direction: column; }
+/* rodapé do cartão: tempo/prazo à esquerda, "Mover para…" à direita, numa linha só */
+.card-pe { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.card-pe .card-rodape { min-width: 0; }
+.card-pe select.mover { width: auto; max-width: 58%; margin-top: 0; flex: none; }
+.card-pe:not(:has(.card-rodape > *)) select.mover { margin-left: auto; }
+/* serviço avulso: nome numa linha, cobrança + preço + botão na outra (o select não corta "Pagamento único") */
+.novo-servico { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto; }
+.novo-servico-nome { grid-column: 1 / -1; }
+@media (max-width: 700px) { .novo-servico { grid-template-columns: minmax(0, 1fr); } }
+/* filtros segmentados no mesmo tamanho do resto da interface */
+.alternar-op { font-size: 13px; padding: 6px 12px; }
+.alternar { flex-wrap: wrap; }
+/* celular: as abas rolam de lado; a borda esmaece para mostrar que há mais */
+@media (max-width: 900px) {
+  .abas { -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); mask-image: linear-gradient(90deg, #000 85%, transparent); }
+}
+.card-pe .dias { white-space: nowrap; }
+.novo-servico > .botao { height: 44px; padding-inline: 18px; }
+.coluna { grid-template-columns: minmax(0, 1fr); }
+.card-pe select.mover { flex: 0 1 auto; min-width: 0; }
+.card-op { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 700px) {
+  .cabecalho { flex-wrap: wrap; align-items: flex-start; }
+  .cabecalho > div:first-child { flex-basis: 100%; }
+}
+@media (max-width: 900px) {
+  .abas { -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 88%, transparent); mask-image: linear-gradient(90deg, transparent, #000 6%, #000 88%, transparent); }
+}
+.card-pe { flex-wrap: wrap; }
+.card-pe select.mover { min-width: 124px; margin-left: auto; }
