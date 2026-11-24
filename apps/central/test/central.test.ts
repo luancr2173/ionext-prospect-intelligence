@@ -793,6 +793,62 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect((await req('GET', '/v1/calendario?de=2026-01-01&ate=2026-12-31')).statusCode).toBe(400);
   });
 
+  it('painel → Google Agenda: fila cria, atualiza e apaga; o evento que volta do Google não duplica', async () => {
+    await sql`truncate compromisso cascade`;
+    const req = (method: 'POST' | 'PATCH' | 'DELETE', url: string, payload?: unknown) =>
+      app.inject({ method, url, headers: AUTH, ...(payload ? { payload } : {}) });
+    type Item = { compromisso_id: string; versao: string; acao: string; evento_id: string; evento: Record<string, any> | null };
+    const fila = async () => (await sql`select jarvis.compromissos_para_google() as r`)[0]!.r as Item[];
+    const marcar = (i: Item, ok: boolean, eventoId: string | null, erro: string | null = null) =>
+      sql`select jarvis.marcar_compromisso_google(${i.compromisso_id}, ${i.versao}, ${ok}, ${eventoId}, ${erro})`;
+
+    const a = (await req('POST', '/v1/compromissos', { titulo: 'Reunião com contador', inicio: '2026-12-02T10:00:00-03:00',
+      local: 'Escritório', link: 'https://meet.google.com/abc-defg-hij' })).json();
+    await req('POST', '/v1/compromissos', { titulo: 'Folga', inicio: '2026-12-08T00:00:00-03:00', dia_inteiro: true });
+    await req('POST', '/v1/compromissos', { titulo: 'Já passou', inicio: '2026-01-02T10:00:00-03:00' });
+
+    let f = await fila();
+    expect(f.map((i) => [i.acao, i.evento?.summary])).toEqual([['criar', 'Reunião com contador'], ['criar', 'Folga']]);
+    const [ia, ib] = f as [Item, Item];
+    expect(ia.evento_id).toBe(a.id.replaceAll('-', ''));
+    expect(ia.evento).toMatchObject({ id: ia.evento_id, location: 'Escritório',
+      start: { dateTime: '2026-12-02T10:00:00-03:00' }, end: { dateTime: '2026-12-02T11:00:00-03:00' } });
+    expect(ia.evento!.description).toContain('Link: https://meet.google.com/abc-defg-hij');
+    expect(ib.evento).toMatchObject({ start: { date: '2026-12-08' }, end: { date: '2026-12-09' } });
+
+    // erro conta tentativa e continua na fila; sucesso tira da fila
+    await marcar(ib, false, null, 'HTTP 500');
+    await marcar(ia, true, ia.evento_id);
+    f = await fila();
+    expect(f.map((i) => i.compromisso_id)).toEqual([ib.compromisso_id]);
+    await marcar(f[0]!, true, f[0]!.evento_id);
+    expect(await fila()).toEqual([]);
+
+    // edição no painel volta para a fila como atualização (sem id no corpo)
+    await req('PATCH', `/v1/compromissos/${a.id}`, { titulo: 'Reunião com contador (remarcada)', fim: '2026-12-02T12:00:00-03:00' });
+    f = await fila();
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ acao: 'atualizar', evento_id: ia.evento_id, evento: { summary: 'Reunião com contador (remarcada)',
+      end: { dateTime: '2026-12-02T12:00:00-03:00' } } });
+    expect(f[0]!.evento!.id).toBeUndefined();
+    await marcar(f[0]!, true, ia.evento_id);
+
+    // o evento criado pelo painel aparece na busca do Google e não vira um compromisso 'google'
+    expect((await sql`select jarvis.sincronizar_agenda(${sql.json([
+      { id: ia.evento_id, titulo: 'Reunião com contador (remarcada)', inicio: '2026-12-02T10:00:00-03:00' },
+      { id: 'g1', titulo: 'Dentista', inicio: '2026-12-04T08:00:00-03:00' },
+    ] as never)}, '2026-12-01T00:00:00-03:00', '2027-01-01T00:00:00-03:00') as r`)[0]!.r).toMatchObject({ recebidos: 1 });
+    expect((await sql`select count(*)::int as n from compromisso where origem = 'google'`)[0]!.n).toBe(1);
+
+    // tirar do calendário apaga no Google
+    await req('DELETE', `/v1/compromissos/${a.id}`);
+    f = await fila();
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ acao: 'apagar', evento_id: ia.evento_id, evento: null });
+    await marcar(f[0]!, true, null);
+    expect(await fila()).toEqual([]);
+  });
+
   it('orçamento → contrato: só aprovado gera; lista o que falta; gera .docx e PDF com os dados do orçamento', async () => {
     await sql`update ionext_dados set razao_social = null, cnpj = null, endereco = null, cidade = null, uf = null,
                                       representante_nome = null, foro_cidade = null, foro_uf = null where id = 1`;

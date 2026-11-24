@@ -1209,7 +1209,7 @@ function editarCompromisso(base = {}) {
     const dlg = h('dialog', { class: 'dialogo dialogo-demanda', 'aria-labelledby': 'cp-tit' },
       h('form', { method: 'dialog', novalidate: true, onsubmit: salvar },
         h('div', { class: 'dm-topo' }, h('h2', { id: 'cp-tit' }, novo ? 'Novo ' : doGoogle ? '' : 'Editar ', h('em', {}, 'compromisso')),
-          doGoogle && h('span', { class: 'legenda' }, 'Do Google Agenda: para mudar, edite por lá')),
+          h('span', { class: 'legenda' }, doGoogle ? 'Do Google Agenda: para mudar, edite por lá' : 'Vai para o seu Google Agenda em até 2 minutos')),
         campo('Título', titulo, 'cp-titulo'),
         h('div', { class: 'dm-grade' }, campo('Tipo', tipo, 'cp-tipo'), campo('Dia', dia, 'cp-dia'),
           h('label', { class: 'cp-check' }, diaInteiro, ' Dia inteiro')),
