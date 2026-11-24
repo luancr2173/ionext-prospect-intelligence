@@ -56,7 +56,7 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     // janela sempre aberta nos testes
     await cfg('hora_inicio', '0'); await cfg('hora_fim', '24'); await cfg('dias_semana', '1,2,3,4,5,6,7');
     await cfg('limite_diario', '15'); await cfg('modo_teste', 'true'); await cfg('numero_teste', '61 99999-0000');
-    await cfg('followup_dias', '3');
+    await cfg('followup_dias', '3'); await cfg('fila_auto_diaria', '0');
   });
 
   it('modo teste: envia para o número de teste e não mexe no funil', async () => {
@@ -476,5 +476,51 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     const [prox] = await reservar(1);
     expect(prox).toMatchObject({ tipo: 'primeira' });
     expect(prox!.contexto.empresa.nome).toBe('Clínica Nova na Fila');
+  });
+
+  it('fila automática: "A revisar" com oferta entra sozinha na fila do Neo, no máximo fila_auto_diaria por dia', async () => {
+    await cfg('modo_teste', 'false'); await cfg('fila_auto_diaria', '2'); await cfg('limite_diario', '0');
+    const nova = async (nome: string, telefone: string, base: string) => {
+      const r = await app.inject({ method: 'POST', url: '/v1/ingest/candidatas', headers: AUTH,
+        payload: { motor: 'prospecting@0.1.0', candidatas: [candidata(nome, telefone, base)] } });
+      const empresaId = r.json().resultados[0].empresa_id as string;
+      const [o] = await sql`select id from oportunidade where empresa_id = ${empresaId}`;
+      return o!.id as string;
+    };
+    const a = await nova('Clínica Auto A', '61 99876-0101', 'autoa');
+    const b = await nova('Clínica Auto B', '61 99876-0102', 'autob');
+    const c = await nova('Clínica Auto C', '61 99876-0103', 'autoc');
+    const fixo = await nova('Clínica Auto Fixo', '61 3333-0104', 'autof'); // sem celular: o Neo não consegue abordar
+    const tirada = await nova('Clínica Auto Tirada', '61 99876-0105', 'autot');
+    await sql`update oportunidade set lead_score = 90 where id = ${a}`;
+    await sql`update oportunidade set lead_score = 80, status = 'revisada' where id = ${b}`;
+    await sql`update oportunidade set lead_score = 70 where id = ${c}`;
+    await sql`update oportunidade set lead_score = 99 where id = ${fixo}`;
+    // já esteve na fila e foi tirada no painel: não volta sozinha
+    await sql`update oportunidade set lead_score = 99, status = 'aprovada_para_contato', responsavel = 'painel' where id = ${tirada}`;
+    await sql`update oportunidade set status = 'revisada', responsavel = 'painel' where id = ${tirada}`;
+
+    await reservar(); await reservar(); // várias chamadas no dia não passam do limite
+    const st = async (id: string) => ((await sql`select status from oportunidade where id = ${id}`)[0]!.status as string);
+    expect(await st(a)).toBe('aprovada_para_contato');
+    expect(await st(b)).toBe('aprovada_para_contato');
+    expect(await st(c)).toBe('nova');
+    expect(await st(fixo)).toBe('nova');
+    expect(await st(tirada)).toBe('revisada');
+    const [h] = await sql`select por from oportunidade_etapa where oportunidade_id = ${a} and para = 'aprovada_para_contato'`;
+    expect(h!.por).toBe('neo_auto');
+
+    // modo teste não mexe no funil
+    await cfg('fila_auto_diaria', '5'); await cfg('modo_teste', 'true');
+    await reservar();
+    expect(await st(c)).toBe('nova');
+    // desligado com 0
+    await cfg('modo_teste', 'false'); await cfg('fila_auto_diaria', '0');
+    await reservar();
+    expect(await st(c)).toBe('nova');
+    // cota do dia aumentou: entra a próxima
+    await cfg('fila_auto_diaria', '3');
+    await reservar();
+    expect(await st(c)).toBe('aprovada_para_contato');
   });
 });
