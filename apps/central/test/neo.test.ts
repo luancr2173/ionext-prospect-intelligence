@@ -56,7 +56,7 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     // janela sempre aberta nos testes
     await cfg('hora_inicio', '0'); await cfg('hora_fim', '24'); await cfg('dias_semana', '1,2,3,4,5,6,7');
     await cfg('limite_diario', '15'); await cfg('modo_teste', 'true'); await cfg('numero_teste', '61 99999-0000');
-    await cfg('followup_dias', '3'); await cfg('fila_auto_diaria', '0');
+    await cfg('followup_dias', '3'); await cfg('fila_auto_diaria', '0'); await cfg('descarte_sem_resposta_dias', '14');
   });
 
   it('modo teste: envia para o número de teste e não mexe no funil', async () => {
@@ -359,6 +359,64 @@ describe.skipIf(!URL)('Neo (schema neo)', () => {
     expect(o!.status).toBe('descartada');
     await sql`update oportunidade set status = 'aprovada_para_contato' where id = ${op}`;
     expect(await reservar()).toHaveLength(0); // bloqueada mesmo se reaprovada
+  });
+
+  it('funil: descarta quem não responde há 14 dias e reabre se a empresa responder depois', async () => {
+    await cfg('modo_teste', 'false');
+    const st = async (id: string) => (await sql`select status, responsavel from oportunidade where id = ${id}`)[0]!;
+    const calada = await aprovada('Clínica Calada', '61 99876-0071', 'calada');
+    const recente = await aprovada('Clínica Recente', '61 99876-0072', 'recente');
+    const sumiu = await aprovada('Clínica Sumiu', '61 99876-0073', 'sumiu');
+    const robo = await aprovada('Clínica Robô', '61 99876-0074', 'robo');
+    const reuniao = await aprovada('Clínica Reunião', '61 99876-0075', 'reuniao');
+    for (const r of await reservar(10)) await sql`select neo.registrar_envio(${r.envio_id}, 'Olá!', true)`;
+    expect((await st(calada)).status).toBe('abordada');
+
+    // abordada há 20 dias, nunca respondeu
+    await sql`update oportunidade set etapa_desde = now() - interval '20 days' where id in ${sql([calada, recente, sumiu, robo])}`;
+    // respondeu há 3 dias
+    await sql`update oportunidade set status = 'respondeu' where id = ${recente}`;
+    await sql`update oportunidade set etapa_desde = now() - interval '20 days' where id = ${recente}`;
+    await sql`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por, registrado_em)
+              values (${recente}, 'whatsapp', 'entrada', 'Oi, tenho interesse', 'neo', now() - interval '3 days')`;
+    // respondeu há 16 dias e sumiu
+    await sql`update oportunidade set status = 'respondeu' where id = ${sumiu}`;
+    await sql`update oportunidade set etapa_desde = now() - interval '18 days' where id = ${sumiu}`;
+    await sql`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por, registrado_em)
+              values (${sumiu}, 'whatsapp', 'entrada', 'Me manda o preço', 'neo', now() - interval '16 days')`;
+    // só resposta automática ontem: não conta como resposta
+    await sql`insert into interacao (oportunidade_id, canal, direcao, resumo, registrado_por, registrado_em)
+              values (${robo}, 'whatsapp', 'entrada', '[Resposta automática — o Neo não respondeu] Olá, já te atendo', 'neo', now() - interval '1 day')`;
+    // reunião parada há 20 dias: etapa conduzida por gente, fica
+    await sql`update oportunidade set status = 'reuniao' where id = ${reuniao}`;
+    await sql`update oportunidade set etapa_desde = now() - interval '20 days' where id = ${reuniao}`;
+
+    const [d] = await sql`select neo.descartar_sem_resposta() as n`;
+    expect(d!.n).toBe(3);
+    expect(await st(calada)).toEqual({ status: 'descartada', responsavel: 'descarte_auto' });
+    expect((await st(sumiu)).status).toBe('descartada');
+    expect((await st(robo)).status).toBe('descartada');
+    expect((await st(recente)).status).toBe('respondeu');
+    expect((await st(reuniao)).status).toBe('reuniao');
+    const [h] = await sql`select de, para, por from oportunidade_etapa where oportunidade_id = ${calada} order by id desc limit 1`;
+    expect(h).toMatchObject({ de: 'abordada', para: 'descartada', por: 'descarte_auto' });
+    expect(await reservar(10)).toHaveLength(0); // sem follow-up para descartada
+
+    // a empresa respondeu depois: volta para o funil
+    await sql`select neo.ao_receber('5561998760071', 'Desculpa a demora, ainda tem interesse?')`;
+    expect((await st(calada)).status).toBe('respondeu');
+    // opt-out depois do descarte não reabre
+    await sql`select neo.ao_receber('5561998760073', 'Não quero receber mensagens')`;
+    expect((await st(sumiu)).status).toBe('descartada');
+
+    // 0 desliga; e roda sozinho dentro do neo.reservar
+    await sql`update oportunidade set status = 'abordada' where id = ${recente}`;
+    await sql`update oportunidade set etapa_desde = now() - interval '30 days' where id = ${recente}`;
+    await sql`delete from interacao where oportunidade_id = ${recente}`;
+    await cfg('descarte_sem_resposta_dias', '0');
+    await reservar(); expect((await st(recente)).status).toBe('abordada');
+    await cfg('descarte_sem_resposta_dias', '14');
+    await reservar(); expect((await st(recente)).status).toBe('descartada');
   });
 
   it('follow-up depois de N dias sem resposta, uma vez só', async () => {
