@@ -2048,6 +2048,7 @@ async function telaEmpresa(id) {
 
     h('div', { class: 'grade grade-2' },
       h('div', { class: 'pilha' },
+        cartaoReferencias(f),
         h('div', { class: 'cartao' },
           h('h2', {}, 'Presença digital'),
           p && p.url_site && h('dl', { class: 'dados' }, h('dt', {}, 'Site'), h('dd', {}, linkSeguro(p.url_site))),
@@ -2185,6 +2186,140 @@ function cartaoNeo(neo) {
           x.mensagem && h('div', { class: 'item-sub', style: { whiteSpace: 'pre-wrap' } }, x.mensagem),
           x.erro && h('div', { class: 'item-sub' }, `Motivo: ${x.erro}`),
           h('div', { class: 'item-sub' }, quando(x.enviado_em || x.reservado_em))))));
+}
+
+// ------------------------------------------------------------------ referências para montar o site
+const REDES_PAINEL = [
+  [/(^|\.)instagram\.com$/, 'instagram', 'Instagram'],
+  [/(^|\.)facebook\.com$|(^|\.)fb\.com$/, 'facebook', 'Facebook'],
+  [/(^|\.)linktr\.ee$|(^|\.)linkr\.bio$|(^|\.)beacons\.ai$|(^|\.)bio\.link$/, 'linktree', 'Links da bio'],
+  [/(^|\.)tiktok\.com$/, 'tiktok', 'TikTok'],
+  [/(^|\.)linkedin\.com$/, 'linkedin', 'LinkedIn'],
+  [/(^|\.)youtube\.com$/, 'youtube', 'YouTube'],
+  [/^wa\.me$|(^|\.)whatsapp\.com$/, 'whatsapp', 'WhatsApp'],
+];
+const hostUrl = (u) => { try { return new URL(u).hostname.toLowerCase().replace(/^www\./, ''); } catch { return null; } };
+const ehMapa = (u) => { const x = hostUrl(u) || ''; return /^maps\.app\.goo\.gl$|^goo\.gl$|^g\.page$/.test(x) || (/(^|\.)google\.[a-z.]+$/.test(x) && /\/maps|[?&]cid=/.test(u)); };
+const redeDaUrl = (u) => { const x = hostUrl(u); return x ? (REDES_PAINEL.find(([re]) => re.test(x)) || null) : null; };
+/** "https://instagram.com/clinica.sorriso/" → "@clinica.sorriso" */
+const rotuloLink = (u, rede) => {
+  try {
+    const url = new URL(u);
+    const parte = url.pathname.split('/').filter(Boolean)[0];
+    if (parte && ['instagram', 'tiktok'].includes(rede)) return `@${parte.replace(/^@/, '')}`;
+    return (url.hostname.replace(/^www\./, '') + url.pathname).replace(/\/$/, '');
+  } catch { return u; }
+};
+
+/**
+ * Tudo o que serve de base para montar o site da empresa, num lugar só: site atual, Instagram,
+ * Facebook, links da bio e perfil do Google. Junta contatos, verificações e evidências;
+ * quando falta algo, oferece a busca pronta (marcada como "não confirmado") e um campo para colar o link.
+ */
+function cartaoReferencias(f) {
+  const e = f.empresa;
+  const p = f.presenca_digital;
+  const links = new Map(); // url normalizada → { url, tipo, rotulo, fonte }
+  const add = (url, tipo, rotulo, fonte) => {
+    if (!/^https?:\/\//i.test(url || '')) return;
+    const chave = url.toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/+$/, '');
+    if (!links.has(chave)) links.set(chave, { url, tipo, rotulo, fonte });
+  };
+  const addAuto = (url, fonte) => {
+    if (!/^https?:\/\//i.test(url || '')) return;
+    const r = redeDaUrl(url);
+    if (r) add(url, r[1], r[2], fonte);
+    else if (ehMapa(url)) add(url, 'mapa', 'Google Maps', fonte);
+  };
+
+  if (p && p.url_site) add(p.url_site, 'site', 'Site atual', 'verificação de presença');
+  (f.auditorias || []).forEach((a) => a.url && add(a.url, 'site', 'Site atual', 'auditoria'));
+  const NOME_FONTE = { manual: 'você registrou', osm: 'OpenStreetMap', fsq_os: 'Foursquare', busca_web: 'busca web', receita: 'Receita', http: 'site/DNS' };
+  (f.contatos || []).forEach((c) => addAuto(c.valor, NOME_FONTE[c.fonte] || c.fonte || 'contato'));
+  (f.identificadores || []).forEach((i) => { if (i.fonte === 'google_maps_link') add(i.valor, 'mapa', 'Google Maps', 'você registrou'); });
+  (f.validacao.evidencias || []).forEach((ev) => {
+    if (ev.fonte !== 'manual' || !ev.url) return;
+    const t = (ev.payload || {}).tipo;
+    if (t === 'site_encontrado') add(ev.url, 'site', 'Site atual', 'você registrou');
+    else if (t === 'perfil_google' || t === 'avaliacoes') { if (ehMapa(ev.url) || t === 'perfil_google') add(ev.url, 'mapa', 'Google Maps', 'você registrou'); }
+    else addAuto(ev.url, 'você registrou');
+  });
+
+  const ordem = ['site', 'instagram', 'facebook', 'linktree', 'tiktok', 'youtube', 'linkedin', 'mapa', 'whatsapp'];
+  const lista = [...links.values()].filter((l) => l.tipo !== 'whatsapp').sort((a, b) => ordem.indexOf(a.tipo) - ordem.indexOf(b.tipo));
+  const tem = (t) => lista.some((l) => l.tipo === t);
+
+  const copiar = async (texto, msg) => {
+    try { await navigator.clipboard.writeText(texto); aviso(msg); } catch { aviso('Não deu para copiar. Selecione e copie manualmente.'); }
+  };
+  const linha = (l) => h('div', { class: `ref ref-${l.tipo}` },
+    h('span', { class: 'ref-tipo' }, l.rotulo),
+    h('div', { class: 'ref-link' }, linkSeguro(l.url, rotuloLink(l.url, l.tipo)), h('small', {}, `fonte: ${l.fonte}`)),
+    h('button', { class: 'botao-texto', type: 'button', title: 'Copiar link', onclick: () => copiar(l.url, 'Link copiado') }, 'Copiar'));
+
+  // buscas prontas para o que não foi encontrado (não são dados confirmados)
+  const local = [e.cidade, e.uf].filter(Boolean).join(' ');
+  const nome = e.nome_fantasia || e.razao_social || '';
+  const google = (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+  const buscas = [
+    !tem('instagram') && ['Procurar Instagram', google(`site:instagram.com "${nome}" ${e.cidade || ''}`.trim())],
+    !tem('facebook') && ['Procurar Facebook', google(`site:facebook.com "${nome}" ${e.cidade || ''}`.trim())],
+    !tem('site') && ['Procurar site', google(`"${nome}" ${[e.bairro, local].filter(Boolean).join(' ')}`)],
+    !tem('mapa') && ['Abrir no Google Maps', `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([nome, e.endereco, e.bairro, local].filter(Boolean).join(', '))}`],
+  ].filter(Boolean);
+
+  // colar um link encontrado: o tipo é reconhecido pelo endereço
+  const entrada = h('input', { type: 'url', placeholder: 'Achou? Cole aqui o link do Instagram, Facebook, site ou Google Maps' });
+  const dica = h('small', { class: 'ref-dica' });
+  const tipoDoLink = (u) => {
+    if (!/^https?:\/\/\S+\.\S+/i.test(u)) return null;
+    const r = redeDaUrl(u);
+    if (r) return { tipo: 'rede_social', texto: `Vai salvar como ${r[2]}.` };
+    if (ehMapa(u)) return { tipo: 'perfil_google', texto: 'Vai salvar como perfil no Google Maps.' };
+    return { tipo: 'site_encontrado', texto: 'Vai salvar como site da empresa (a classificação passa para “Tem site”).' };
+  };
+  entrada.addEventListener('input', () => { const t = tipoDoLink(entrada.value.trim()); dica.textContent = t ? t.texto : ''; });
+  const salvar = h('button', { class: 'botao pequeno', type: 'submit' }, 'Salvar');
+  const form = h('form', { class: 'ref-form', onsubmit: async (ev) => {
+    ev.preventDefault();
+    let u = entrada.value.trim();
+    if (u && !/^https?:\/\//i.test(u)) u = `https://${u}`;
+    const t = tipoDoLink(u);
+    if (!t) { aviso('Cole um link completo (ex.: https://instagram.com/empresa).'); entrada.focus(); return; }
+    salvar.disabled = true;
+    try { await api('POST', `/v1/empresas/${e.id}/evidencias-manuais`, { tipo: t.tipo, url: u }); aviso('Link salvo na ficha.'); render(); }
+    catch (err) { aviso(err.message); salvar.disabled = false; }
+  } }, entrada, salvar);
+
+  // briefing para começar o site: dados da empresa + links
+  const contato = (tipo) => (f.contatos || []).find((c) => c.tipo === tipo && !c.suspeito);
+  const zap = f.neo && f.neo.whatsapp ? f.neo.whatsapp.numero : null;
+  const tel = contato('telefone');
+  const email = contato('email');
+  const briefing = () => [
+    `Empresa: ${nome}`,
+    e.razao_social && e.razao_social !== nome && `Razão social: ${e.razao_social}`,
+    e.cnpj && `CNPJ: ${cnpjFmt(e.cnpj)}`,
+    `Segmento: ${nomeSegmento(e.segmento)}`,
+    [e.endereco, e.bairro, local, e.cep].some(Boolean) && `Endereço: ${[e.endereco, e.bairro, local].filter(Boolean).join(', ')}${e.cep ? ` · CEP ${e.cep}` : ''}`,
+    zap && `WhatsApp: ${telFmt(zap)}`,
+    tel && (!zap || tel.valor_normalizado !== zap) && `Telefone: ${telFmt(tel.valor_normalizado || tel.valor)}`,
+    email && `E-mail: ${email.valor}`,
+    ...lista.map((l) => `${l.rotulo}: ${l.url}`),
+  ].filter(Boolean).join('\n');
+
+  return h('div', { class: 'cartao referencias' },
+    h('div', { class: 'ref-cabecalho' },
+      h('h2', {}, 'Referências para o site'),
+      h('button', { class: 'botao pequeno', type: 'button', title: 'Nome, segmento, endereço, contatos e links, prontos para colar',
+        onclick: () => copiar(briefing(), 'Dados da empresa copiados — é só colar no pedido do site') }, 'Copiar dados')),
+    lista.length === 0
+      ? h('p', { class: 'legenda' }, 'Ainda não há Instagram, site ou perfil do Google registrado para esta empresa.')
+      : lista.map(linha),
+    buscas.length > 0 && h('div', { class: 'ref-buscas' },
+      h('small', {}, 'Buscar (não confirmado):'),
+      buscas.map(([t, u]) => h('a', { class: 'ref-busca', href: u, target: '_blank', rel: 'noopener noreferrer' }, t))),
+    form, dica);
 }
 
 function resumoEvidencia(ev) {
@@ -2469,6 +2604,7 @@ function formVerificacaoManual(empresaId) {
     h('option', { value: 'atividade_recente' }, 'Atividade recente (post/avaliação)'),
     h('option', { value: 'link_bio' }, 'Link na bio do Instagram'),
     h('option', { value: 'site_encontrado' }, 'Encontrei o site da empresa'),
+    h('option', { value: 'rede_social' }, 'Encontrei o Instagram/Facebook da empresa'),
     h('option', { value: 'observacao' }, 'Observação'));
   const url = h('input', { type: 'url', placeholder: 'https://…' });
   const quantidade = h('input', { type: 'number', min: 0, placeholder: 'ex.: 84' });

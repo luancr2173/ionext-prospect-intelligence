@@ -179,6 +179,23 @@ describe.skipIf(!URL)('Central de Oportunidades (integração)', () => {
     expect(lista.total).toBe(1);
   });
 
+  it('verificação manual de rede social grava o contato e passa "sem site" para "só redes"', async () => {
+    const r = await ingest([candidata({ contatos: [], verificacoes: { ...verificacoesSemSite, V6: { status: 'executado', redes: [] } } })]);
+    const id = r.json().resultados[0].empresa_id as string;
+    expect((await sql`select classificacao from presenca_digital where empresa_id = ${id}`)[0]!.classificacao).toBe('SEM_SITE');
+
+    const ruim = await app.inject({ method: 'POST', url: `/v1/empresas/${id}/evidencias-manuais`, headers: AUTH,
+                                    payload: { tipo: 'rede_social', url: 'https://sorrisofeliz.com.br' } });
+    expect(ruim.statusCode).toBe(400);
+
+    const ig = await app.inject({ method: 'POST', url: `/v1/empresas/${id}/evidencias-manuais`, headers: AUTH,
+                                  payload: { tipo: 'rede_social', url: 'https://www.instagram.com/sorrisofeliz/?hl=pt' } });
+    expect(ig.statusCode).toBe(201);
+    expect(ig.json().classificacao).toBe('SOMENTE_REDES');
+    const f = (await app.inject({ method: 'GET', url: `/v1/empresas/${id}`, headers: AUTH })).json();
+    expect(f.contatos).toEqual(expect.arrayContaining([expect.objectContaining({ tipo: 'instagram', valor: 'https://www.instagram.com/sorrisofeliz', fonte: 'manual' })]));
+  });
+
   // ------------------------------------------------------------------ painel
   it('painel: serve a página, exige senha e usa cookie de sessão', async () => {
     const pagina = await app.inject({ method: 'GET', url: '/' });

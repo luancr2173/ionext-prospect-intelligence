@@ -113,7 +113,7 @@ export const RespostaIngest = z.object({
 
 /** Verificação manual feita no painel (substitui dados que viriam de APIs pagas). */
 export const EvidenciaManual = z.object({
-  tipo: z.enum(['perfil_google', 'avaliacoes', 'atividade_recente', 'link_bio', 'site_encontrado', 'observacao']),
+  tipo: z.enum(['perfil_google', 'avaliacoes', 'atividade_recente', 'link_bio', 'site_encontrado', 'rede_social', 'observacao']),
   url: z.string().url().nullable().optional(),
   quantidade: z.number().int().min(0).nullable().optional(),   // avaliacoes
   nota: z.number().min(0).max(5).nullable().optional(),        // avaliacoes
@@ -122,7 +122,7 @@ export const EvidenciaManual = z.object({
 }).superRefine((m, ctx) => {
   if (m.tipo === 'avaliacoes' && m.quantidade == null) ctx.addIssue({ code: 'custom', path: ['quantidade'], message: 'obrigatório para avaliacoes' });
   if (m.tipo === 'atividade_recente' && !m.data) ctx.addIssue({ code: 'custom', path: ['data'], message: 'obrigatório para atividade_recente' });
-  if (['perfil_google', 'link_bio', 'site_encontrado'].includes(m.tipo) && !m.url) ctx.addIssue({ code: 'custom', path: ['url'], message: 'obrigatório' });
+  if (['perfil_google', 'link_bio', 'site_encontrado', 'rede_social'].includes(m.tipo) && !m.url) ctx.addIssue({ code: 'custom', path: ['url'], message: 'obrigatório' });
 });
 
 export const OptOut = z.object({

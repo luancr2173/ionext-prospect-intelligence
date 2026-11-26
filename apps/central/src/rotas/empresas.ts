@@ -1,5 +1,5 @@
 import { EvidenciaManual } from '@ionext/contratos';
-import { classificarPresenca, type Verificacoes } from '@ionext/dominio';
+import { classificarPresenca, classificarUrl, type Verificacoes } from '@ionext/dominio';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Sql } from '../db.ts';
@@ -203,6 +203,11 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
   app.post('/empresas/:id/evidencias-manuais', async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const m = EvidenciaManual.parse(req.body);
+    // rede social: precisa ser um link de rede (Instagram, Facebook, LinkedIn, TikTok, Linktree, YouTube...)
+    const rede = m.tipo === 'rede_social' && m.url ? classificarUrl(m.url) : null;
+    if (m.tipo === 'rede_social' && rede?.tipo !== 'rede') {
+      return reply.code(400).send({ erro: 'Esse link não parece ser de uma rede social. Para o site da empresa, use “Encontrei o site da empresa”.' });
+    }
 
     const resultado = await sql.begin(async (tx) => {
       const [existe] = await tx`select 1 from empresa where id = ${id}`;
@@ -234,6 +239,32 @@ export function rotasEmpresas(app: FastifyInstance, sql: Sql) {
             verificacoes = excluded.verificacoes, confiabilidade = excluded.confiabilidade,
             motor_versao = excluded.motor_versao, verificado_em = excluded.verificado_em,
             evidencia_ids = presenca_digital.evidencia_ids || excluded.evidencia_ids`;
+      }
+
+      if (rede?.tipo === 'rede' && m.url) {
+        const url = m.url.trim().split('?')[0]!.replace(/\/+$/, '');
+        const tipoContato = ['instagram', 'facebook', 'linkedin'].includes(rede.rede) ? rede.rede : 'outro';
+        await tx`
+          insert into contato (empresa_id, tipo, valor, valor_normalizado, publico_comercial, evidencia_id)
+          values (${id}, ${tipoContato}, ${url}, ${url.toLowerCase()}, true, ${ev!.id})
+          on conflict (empresa_id, tipo, valor_normalizado) do update
+            set publico_comercial = true, evidencia_id = coalesce(contato.evidencia_id, excluded.evidencia_id)`;
+        // a rede entra na V6: uma empresa "sem site" com Instagram passa a "só redes sociais"
+        const [p] = await tx<{ verificacoes: Verificacoes & { motivos?: string[] } }[]>`
+          select verificacoes from presenca_digital where empresa_id = ${id}`;
+        if (p) {
+          const { motivos: _m, ...atual } = p.verificacoes;
+          const redes = atual.V6?.status === 'executado' ? atual.V6.redes : [];
+          if (!redes.includes(rede.rede)) {
+            const v: Verificacoes = { ...VERIFICACOES_VAZIAS, ...atual, V6: { status: 'executado', redes: [...redes, rede.rede] } };
+            const cls = classificarPresenca(v);
+            await tx`
+              update presenca_digital set classificacao = ${cls.classificacao}, url_site = ${cls.url_site},
+                     verificacoes = ${tx.json({ ...v, motivos: cls.motivos } as never)}, confiabilidade = ${cls.confiabilidade},
+                     evidencia_ids = evidencia_ids || ${[ev!.id]}::uuid[]
+               where empresa_id = ${id}`;
+          }
+        }
       }
 
       const r = await recalcularOportunidade(tx, id);

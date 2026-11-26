@@ -909,3 +909,21 @@ select option:disabled { color: var(--apagado); }
   .cal-semana { padding: 6px 4px; text-align: center; }
   .cal-mes { font-size: 18px; }
 }
+
+/* referências para montar o site (ficha da empresa) */
+.referencias .ref-cabecalho { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.referencias .ref-cabecalho h2 { margin: 0; }
+.ref { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--linha); font-size: 14px; }
+.ref:first-of-type { border-top: 0; }
+.ref-tipo { color: var(--suave); font-size: 13px; }
+.ref-link { min-width: 0; overflow-wrap: anywhere; }
+.ref-link small { display: block; color: var(--apagado); font-size: 12px; margin-top: 2px; }
+.ref-instagram .ref-tipo, .ref-site .ref-tipo { color: var(--texto); font-weight: 600; }
+.ref-buscas { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--linha); }
+.ref-buscas small { color: var(--apagado); font-size: 12px; margin-right: 2px; }
+.ref-busca { font-size: 13px; color: var(--azul); text-decoration: none; border: 1px solid var(--azul-borda); background: var(--azul-fundo); border-radius: 999px; padding: 3px 10px; }
+.ref-busca:hover { color: var(--azul-hover); }
+.ref-form { display: flex; gap: 8px; margin-top: 12px; }
+.ref-form input { flex: 1; min-width: 0; }
+.ref-dica { display: block; color: var(--suave); font-size: 12px; margin-top: 6px; min-height: 1em; }
+@media (max-width: 560px) { .ref { grid-template-columns: 1fr auto; } .ref-tipo { grid-column: 1 / -1; } }
